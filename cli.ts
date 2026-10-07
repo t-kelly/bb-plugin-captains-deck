@@ -55,14 +55,22 @@ export function registerDeckCli(bb: BbPluginApi, store: DeckStore, handlers: {
       if (command === "list" || command === "bearings") {
         const page = store.listBoard({ ...(flag("cursor") ? { cursor: flag("cursor")! } : {}), limit: flag("limit") ? Number(flag("limit")) : 50 });
         if (command === "list") return reply(page, [...page.tasks.map(formatTask), ...(page.nextCursor ? [`Next page: --cursor ${page.nextCursor}`] : [])].join("\n") || "No deck tasks.");
+        // Unresolved calls are queried directly: an old call must not slide off
+        // the lane page while newer cards churn.
+        const calls = store.listCalls({ threadId: "cli", view: "attention", limit: 100 });
+        const deferred = store.listCalls({ threadId: "cli", view: "deferred", limit: 100 });
         const sections = [
           { title: "Charted Next", tasks: page.tasks.filter((task) => task.state === "charted") },
           { title: "Underway", tasks: page.tasks.filter((task) => task.state === "underway" || task.state === "failed") },
-          { title: "Captain's Call", tasks: page.tasks.filter((task) => task.call?.status === "open" || task.call?.status === "deferred") },
+          { title: "Captain's Call", tasks: [...calls.tasks, ...deferred.tasks.filter((task) => !calls.tasks.some((open) => open.id === task.id))] },
           { title: "Awaiting Merge", tasks: page.tasks.filter((task) => task.state === "merge") },
           { title: "Recently Landed", tasks: page.tasks.filter((task) => task.state === "landed") },
         ];
-        return reply({ ...page, sections }, ["Bearings (this page)", ...sections.flatMap((section) => [section.title, ...section.tasks.map(formatTask)]), `Unresolved ${page.counts.unresolved}; unseen ${page.counts.unseen}`, ...(page.nextCursor ? [`Next page: --cursor ${page.nextCursor}`] : [])].join("\n"));
+        return reply({ ...page, sections, callsNextCursor: calls.nextCursor }, ["Bearings (lanes on this page; calls across the whole Deck)",
+          ...sections.flatMap((section) => [section.title, ...section.tasks.map(formatTask)]),
+          `Unresolved ${page.counts.unresolved}; unseen ${page.counts.unseen}`,
+          ...(calls.nextCursor ? [`More unresolved calls remain beyond this page.`] : []),
+          ...(page.nextCursor ? [`Next lane page: --cursor ${page.nextCursor}`] : [])].join("\n"));
       }
       if (command === "export") return reply(store.exportSnapshot(), "Use --json to export the complete recovery snapshot.");
       if (command === "import") {

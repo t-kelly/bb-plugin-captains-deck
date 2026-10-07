@@ -15,18 +15,16 @@ invents work, and answering a call never moves a lane by itself.
 ## Install
 
 ```sh
-bb plugin install git:https://github.com/t-kelly/bb-plugin-captains-deck.git@thomas/captains-deck-actions
+bb plugin install git:https://github.com/deimantasnork/bb-plugin-captains-deck.git@semver:^0.4.0
 ```
 
-This fork branch is unreleased; no tag or catalog publication is implied.
 Requires bb 0.45 or newer. On an in-place update, the existing board is imported
 once into the plugin database and the old KV storage is left untouched.
 
 BB 0.45 refuses a same-ID managed Git/catalog source replacement. Do not remove
 an installed Deck to work around that refusal: removal deletes configuration
 and can remove data. Keep the existing installation until a supported
-non-destructive source-switch route is available. Direct-path moves preserve
-state, but that does not make a Git/catalog-to-path switch supported.
+non-destructive source-switch route is available.
 
 ## The board
 

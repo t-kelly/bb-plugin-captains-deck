@@ -42,17 +42,20 @@ export function normalizeLegacyCards(value: unknown): DeckCard[] {
   return cards.map((old) => {
     if (ids.has(old.id)) throw new Error(`Duplicate legacy task ${old.id}`);
     ids.add(old.id);
-    const convert = (decision: z.infer<typeof legacyDecisionSchema>, generation: number): CaptainCall => ({
+    // 0.3.1 treated a decision as waiting only in the decision lane; a card the
+    // first mate moved on carries an abandoned question, not a new ask.
+    const convert = (decision: z.infer<typeof legacyDecisionSchema>, generation: number, current: boolean): CaptainCall => ({
       id: callId(old.id, generation), generation, kind: "DECIDE", ask: decision.question, recommendation: null,
       options: decision.options, recommendedId: decision.recommendedId, context: decision.context, evidence: [], approvalScope: null,
-      status: decision.answeredAt === null ? "open" : "answered", source: null, replyThreadId: null, replyAfterSeq: 0, provenance: "legacy",
+      status: decision.answeredAt !== null ? "answered" : current && old.state === "decision" ? "open" : "dismissed",
+      source: null, replyThreadId: null, replyAfterSeq: 0, provenance: "legacy",
       askedAt: decision.askedAt, answeredAt: decision.answeredAt, answerId: decision.answerId, answerLabel: decision.answerLabel,
       answerNote: decision.answerNote, deferUntil: null,
     });
     const { decision, history, ...fields } = old;
     const generations = history.length + (decision === null ? 0 : 1);
-    return cardSchema.parse({ ...fields, call: decision === null ? null : convert(decision, generations),
-      history: history.map((entry, index) => convert(entry, history.length - index)), revision: 1,
+    return cardSchema.parse({ ...fields, call: decision === null ? null : convert(decision, generations, true),
+      history: history.map((entry, index) => convert(entry, history.length - index, false)), revision: 1,
       nextGeneration: generations + 1, seenGeneration: 0, pendingCall: null });
   });
 }

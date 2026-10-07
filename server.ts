@@ -110,6 +110,8 @@ export default async function plugin(bb: BbPluginApi) {
     if (deliveries.has(receiptId)) return receipt;
     const state = await evidence.notice(receipt.delivery.threadId, `[Captain's Deck receipt ${receipt.id}]`, Date.parse(receipt.createdAt));
     await scoped(threadId);
+    // A notice that definitely never left the plugin stays failed, not "maybe delivered".
+    if (receipt.delivery.state === "failed" && state.state === "uncertain" && state.queueId === null) return receipt;
     const next = store.updateDelivery(receiptId, state); changed(); return next;
   }
 

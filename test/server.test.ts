@@ -17,11 +17,12 @@ async function fixture(notify = false) {
     completed: false,
     text: "",
     failSend: false,
+    available: true,
   };
   const host = createFakePluginHost({ pluginId: "captains-deck", agentSkillIds: ["captains-deck"], settings: { firstMateThreadId: notify ? "producer" : "" }, sdk: {
     projects: { get: async () => ({ id: "personal", name: "Synthetic", kind: "personal", sources: [], gitRemoteUrl: null, createdAt: 1, updatedAt: 1 }) },
     threads: {
-      get: async () => makeThreadResponse({ id: "producer", projectId: "personal", environmentId: null, title: "CoS synthetic", visibility: "visible", archivedAt: null, deletedAt: null }),
+      get: async () => makeThreadResponse({ id: "producer", projectId: "personal", environmentId: null, title: "CoS synthetic", visibility: native.available ? "visible" : "hidden", archivedAt: null, deletedAt: null }),
       send: async () => { sendAttempts++; if (native.failSend) throw new Error("Synthetic ambiguous transport failure"); return { ok: true, delivery: "sent" }; },
       queuedMessages: { list: async () => [] },
       events: { list: async (args) => {
@@ -52,6 +53,35 @@ describe("one authoritative Deck mutation boundary", () => {
     const page = cardsPageSchema.parse(await host.harness.behavior.callRpc("deck_board", { limit: 100 }));
     expect(page.tasks.map((task) => task.title).sort()).toEqual([...expected].sort());
     expect(page.counts).toMatchObject({ total: 40, attention: 0, unresolved: 0, unseen: 0 });
+  });
+
+  it("keeps an old unresolved call in bearings while newer cards churn", async () => {
+    const host = await fixture();
+    let stale = await chart(host, "Old unanswered call");
+    const ask = await host.harness.behavior.runCli(["ask", stale.id, "--question", "Still waiting on the captain", "--json"]);
+    expect(ask.exitCode).toBe(0); stale = cardSchema.parse(JSON.parse(ask.stdout!));
+    for (let index = 0; index < 60; index++) await chart(host, `Newer work ${index}`);
+    const bearings = await host.harness.behavior.runCli(["bearings", "--json"]);
+    expect(bearings.exitCode).toBe(0);
+    const sections = z.object({ sections: z.array(z.object({ title: z.string(), tasks: z.array(cardSchema) })), counts: cardsPageSchema.shape.counts }).parse(JSON.parse(bearings.stdout!));
+    expect(sections.counts.unresolved).toBe(1);
+    expect(sections.sections.find((section) => section.title === "Captain's Call")!.tasks.map((task) => task.id)).toEqual([stale.id]);
+    const text = await host.harness.behavior.runCli(["bearings"]);
+    expect(text.stdout).toContain("Old unanswered call");
+  });
+
+  it("keeps a notice that never left the plugin failed rather than possibly delivered", async () => {
+    const host = await fixture(true);
+    host.native.available = false;
+    let task = await chart(host, "Unreachable producer");
+    const ask = await host.harness.behavior.runCli(["ask", task.id, "--question", "Decide", "--json"]);
+    task = cardSchema.parse(JSON.parse(ask.stdout!));
+    const result = actionResult.parse(await host.harness.behavior.callRpc("deck_action", { taskId: task.id, generation: task.call!.generation, expectedRevision: task.revision, operationId: "unreachable", action: "dismiss" }));
+    expect(result.receipt.delivery).toMatchObject({ state: "failed", attempts: 1 });
+    host.native.available = true;
+    const checked = receiptSchema.parse(await host.harness.behavior.callRpc("deck_delivery_check", { receiptId: result.receipt.id }));
+    expect(checked.delivery.state).toBe("failed");
+    expect(host.sends()).toBe(0);
   });
   it("records DO clarification without completing work, then clears only the DO with the same shared action path", async () => {
     const host = await fixture();
