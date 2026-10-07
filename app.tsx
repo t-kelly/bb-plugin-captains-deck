@@ -1,33 +1,30 @@
 // bb-plugin-captains-deck — frontend.
 //
-// The board is read-only except for a Captain's Call: clicking a decision card
-// opens a dialog with the options the first mate attached, and the answer is
-// written back through RPC. Live thread state comes from the sidebar's own
-// thread view, so cards track running agents without polling.
+// Work lanes and explicit Captain calls are projected independently.
+// Full Deck and the scoped native thread tab share the same action controls.
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   definePluginApp,
-  experimental_useSidebarThreadActions,
   experimental_useSidebarThreads,
-  useRealtime,
-  useRpc,
+  useBbNavigate,
 } from "@get-bb/plugin-sdk/app";
-import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
-import type { DeckTask } from "./server";
-import type { rpcContract } from "./server";
-import { Button } from "@/components/ui/button";
+import type { PluginNavPanelProps, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import type { DeckCard } from "./contract";
+import { CallDetail } from "./components/CallDetail";
+import { AttentionPanel } from "./components/AttentionPanel";
+import { useDeckPages } from "./components/useDeckPages";
+import "./app.css";
+import { Button } from "./components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Icon } from "@/components/ui/icon";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+} from "./components/ui/dialog";
+import { Icon } from "./components/ui/icon";
+import { cn } from "./lib/utils";
 
 type ColumnKey = "charted" | "underway" | "decision" | "merge" | "landed";
 
@@ -42,7 +39,7 @@ const COLUMNS: Array<{
   {
     key: "decision",
     title: "Captain's Call",
-    hint: "Waiting on you",
+    hint: "Explicit unresolved calls",
     accent: true,
   },
   { key: "merge", title: "Awaiting Merge", hint: "Review and land" },
@@ -63,9 +60,9 @@ function timeAgo(iso: string): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-function columnFor(task: DeckTask): ColumnKey {
+function columnFor(task: DeckCard): ColumnKey {
   if (task.state === "failed") return "underway";
-  return task.state;
+  return task.state === "decision" ? "underway" : task.state;
 }
 
 interface LiveBadge {
@@ -83,8 +80,8 @@ function liveBadge(thread: PluginSidebarThread | undefined): LiveBadge | null {
   if (thread.status === "stopping" || thread.status === "pending") {
     return { label: thread.status === "pending" ? "Provisioning" : "Stopping", tone: "working" };
   }
-  if (thread.runtimeStatus === "host-reconnecting") {
-    return { label: "Reconnecting", tone: "attention" };
+  if (thread.runtimeStatus === "waiting-for-host") {
+    return { label: "Waiting for host", tone: "attention" };
   }
   if (thread.queuedWork === "waiting") return { label: "Queued", tone: "idle" };
   return { label: "Idle", tone: "idle" };
@@ -121,14 +118,14 @@ function TaskCard({
   thread,
   onOpen,
 }: {
-  task: DeckTask;
+  task: DeckCard;
   thread: PluginSidebarThread | undefined;
   onOpen: () => void;
 }) {
   const badge = liveBadge(thread);
-  const isDecision = task.state === "decision";
-  const interactive = isDecision || task.threadId !== null;
-  const answered = task.decision?.answerLabel ?? null;
+  const isDecision = task.call?.status === "open" || task.call?.status === "deferred";
+  const interactive = task.call !== null || task.pendingCall !== null || task.history.length > 0 || task.threadId !== null;
+  const answered = task.call?.answerLabel ?? null;
   return (
     <div
       role={interactive ? "button" : undefined}
@@ -154,6 +151,7 @@ function TaskCard({
         <Chip className="border-border bg-muted text-muted-foreground">
           {task.kind === "scout" ? "SCOUT" : "SHIP"}
         </Chip>
+        <Chip className="border-border bg-background text-muted-foreground">{task.state}</Chip>
         {task.bot === null ? null : (
           <Chip className="border-border bg-background text-muted-foreground">
             {task.bot}
@@ -173,14 +171,14 @@ function TaskCard({
         </p>
       )}
 
-      {isDecision && task.decision !== null ? (
+      {isDecision && task.call !== null ? (
         <div className="mt-2 rounded-md bg-primary/10 px-2 py-1.5">
           <p className="line-clamp-2 text-xs leading-snug text-foreground">
-            {task.decision.question}
+            {task.call.ask}
           </p>
           <div className="mt-1.5 flex flex-col gap-1">
-            {task.decision.options.slice(0, 4).map((option) => {
-              const recommended = option.id === task.decision?.recommendedId;
+            {task.call.options.slice(0, 4).map((option) => {
+              const recommended = option.id === task.call?.recommendedId;
               return (
                 <div key={option.id} className="flex items-start gap-1.5">
                   <span
@@ -200,14 +198,14 @@ function TaskCard({
                 </div>
               );
             })}
-            {task.decision.options.length > 4 ? (
+            {task.call.options.length > 4 ? (
               <p className="pl-3 text-[10px] text-muted-foreground">
-                +{task.decision.options.length - 4} more
+                +{task.call.options.length - 4} more
               </p>
             ) : null}
           </div>
           <p className="mt-1.5 text-[10px] font-medium text-primary">
-            Answer on the board
+            {task.call.kind} · {task.call.status} · open call details
           </p>
         </div>
       ) : null}
@@ -275,7 +273,7 @@ function ThreadCallCard({
   thread,
   onOpen,
 }: {
-  task: DeckTask;
+  task: DeckCard;
   thread: PluginSidebarThread;
   onOpen: () => void;
 }) {
@@ -352,174 +350,25 @@ function Column({
   );
 }
 
-function DecisionDialog({
-  task,
-  onClose,
-  onAnswered,
-}: {
-  task: DeckTask | null;
-  onClose: () => void;
-  onAnswered: () => void;
-}) {
-  const rpc = useRpc<typeof rpcContract>();
-  const decision = task?.decision ?? null;
-  const [optionId, setOptionId] = useState<string | null>(null);
-  const [note, setNote] = useState("");
-  const [pending, setPending] = useState(false);
-
-  useEffect(() => {
-    setOptionId(decision?.recommendedId ?? decision?.options[0]?.id ?? null);
-    setNote("");
-    setPending(false);
-  }, [task?.id, decision?.recommendedId, decision?.options]);
-
-  if (task === null || decision === null) return null;
-
-  const submit = async () => {
-    const freeform = note.trim();
-    const hasAnswer = optionId !== null || freeform !== "";
-    if (!hasAnswer || pending) return;
-    setPending(true);
-    try {
-      await rpc.call("deck_answer", {
-        taskId: task.id,
-        optionId,
-        note: freeform === "" ? null : freeform,
-      });
-      toast.success("Answer sent to the first mate");
-      onAnswered();
-      onClose();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
-      setPending(false);
-    }
-  };
-
-  return (
-    <Dialog open={true} onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="pr-6 text-base leading-snug">
-            {task.title}
-          </DialogTitle>
-          <DialogDescription>
-            {decision.context ?? "The first mate needs your call."}
-          </DialogDescription>
-        </DialogHeader>
-
-        <p className="text-sm leading-snug">{decision.question}</p>
-
-        <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="Options">
-          {decision.options.map((option) => {
-            const selected = option.id === optionId;
-            const recommended = option.id === decision.recommendedId;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                onClick={() => setOptionId(selected ? null : option.id)}
-                className={cn(
-                  "flex items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                  selected
-                    ? "border-primary bg-primary/10"
-                    : "border-border hover:border-foreground/25",
-                )}
-              >
-                <span
-                  className={cn(
-                    "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
-                    selected ? "border-primary" : "border-muted-foreground/40",
-                  )}
-                >
-                  {selected ? (
-                    <span className="size-2 rounded-full bg-primary" />
-                  ) : null}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 font-medium leading-snug">
-                      {option.label}
-                    </span>
-                    {recommended ? (
-                      <Chip className="border-primary/40 bg-primary/10 text-primary">
-                        REC
-                      </Chip>
-                    ) : null}
-                    <span className="font-mono text-[10px] text-muted-foreground">
-                      {option.id}
-                    </span>
-                  </span>
-                  {option.detail === null ? null : (
-                    <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
-                      {option.detail}
-                    </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <textarea
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-          placeholder="Add a note, or answer in your own words…"
-          rows={2}
-          maxLength={2000}
-          aria-label="Note or freeform answer"
-          className="w-full resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        />
-
-        {task.history.length > 0 ? (
-          <details className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-            <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-              Earlier calls ({task.history.length})
-            </summary>
-            <ul className="mt-1.5 flex flex-col gap-1.5">
-              {task.history.map((previous, index) => (
-                <li key={`${previous.askedAt}-${index}`} className="text-xs leading-snug">
-                  <span className="text-muted-foreground">{previous.question}</span>
-                  <span className="block text-foreground">
-                    {previous.answerLabel ?? "Open when replaced"}
-                    {previous.answerNote === null ? "" : ` — ${previous.answerNote}`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
-
-        <p className="text-[10px] text-muted-foreground">
-          Your answer is recorded on the task and sent to the first mate, which
-          resumes the work. Choosing an option is optional if you answer in your
-          own words.
-        </p>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
-            Cancel
-          </Button>
-          <Button
-            onClick={submit}
-            disabled={pending || (optionId === null && note.trim() === "")}
-          >
-            {pending ? "Sending…" : "Queue answer"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
+function CardDialog({ taskId, onClose, onChanged }: { taskId: string | null; onClose: () => void; onChanged: () => void }) {
+  if (taskId === null) return null;
+  return <Dialog open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <DialogContent className="deck-board-dialog sm:max-w-2xl">
+      <DialogHeader><DialogTitle>Captain's Call · {taskId}</DialogTitle><DialogDescription>Card work and Captain action lifecycle are independent.</DialogDescription></DialogHeader>
+      <CallDetail key={taskId} taskId={taskId} onChanged={onChanged} />
+    </DialogContent>
+  </Dialog>;
 }
 
-function BoardPage() {
-  const rpc = useRpc<typeof rpcContract>();
+function BoardPage({ subPath }: PluginNavPanelProps) {
+  const navigate = useBbNavigate();
+  const { tasks, page, error, loading, refresh: refetch, loadMore } = useDeckPages();
   const threadsState = experimental_useSidebarThreads();
-  const threadActions = experimental_useSidebarThreadActions();
-  const [tasks, setTasks] = useState<DeckTask[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  useEffect(() => {
+    try { setActiveTaskId(subPath.startsWith("task/") ? decodeURIComponent(subPath.slice(5)) : null); }
+    catch { setActiveTaskId(null); }
+  }, [subPath]);
   const [showAllLanded, setShowAllLanded] = useState(false);
   const [crew, setCrew] = useState<string>(() => {
     if (typeof localStorage === "undefined") return "all";
@@ -534,26 +383,6 @@ function BoardPage() {
     }
   }, [crew]);
 
-  const refetch = () => {
-    rpc.call("deck_board").then(
-      (result) => {
-        setTasks(result.tasks);
-        setError(null);
-      },
-      (cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      },
-    );
-  };
-
-  useEffect(() => {
-    refetch();
-    // The board itself changes only when the first mate moves a task; the
-    // sidebar thread view keeps card status live in between.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useRealtime("deck-changed", refetch);
-
   const threadsById = useMemo(() => {
     const map = new Map<string, PluginSidebarThread>();
     for (const thread of threadsState.threads) map.set(thread.id, thread);
@@ -567,8 +396,8 @@ function BoardPage() {
   }, [tasks]);
 
   useEffect(() => {
-    if (crew !== "all" && !crews.includes(crew)) setCrew("all");
-  }, [crews, crew]);
+    if (tasks !== null && page?.nextCursor === null && crew !== "all" && !crews.includes(crew)) setCrew("all");
+  }, [tasks, page?.nextCursor, crews, crew]);
 
   const visibleTasks = useMemo(() => {
     const all = tasks ?? [];
@@ -578,14 +407,17 @@ function BoardPage() {
   }, [tasks, crew]);
 
   const columns = useMemo(() => {
-    const grouped: Record<ColumnKey, DeckTask[]> = {
+    const grouped: Record<ColumnKey, DeckCard[]> = {
       charted: [],
       underway: [],
       decision: [],
       merge: [],
       landed: [],
     };
-    for (const task of visibleTasks) grouped[columnFor(task)].push(task);
+    for (const task of visibleTasks) {
+      grouped[columnFor(task)].push(task);
+      if (task.call?.status === "open" || task.call?.status === "deferred") grouped.decision.push(task);
+    }
     for (const key of Object.keys(grouped) as ColumnKey[]) {
       grouped[key].sort((left, right) =>
         left.updatedAt < right.updatedAt ? 1 : -1,
@@ -598,9 +430,9 @@ function BoardPage() {
   // first mate linked. Deck-owned decisions stay the primary call.
   const threadCalls = useMemo(() => {
     const seen = new Set<string>();
-    const calls: Array<{ task: DeckTask; thread: PluginSidebarThread }> = [];
+    const calls: Array<{ task: DeckCard; thread: PluginSidebarThread }> = [];
     for (const task of visibleTasks) {
-      if (task.threadId === null || task.state === "decision") continue;
+      if (task.threadId === null || task.call?.status === "open" || task.call?.status === "deferred") continue;
       if (seen.has(task.threadId)) continue;
       const thread = threadsById.get(task.threadId);
       if (thread === undefined || !thread.hasPendingInteraction) continue;
@@ -610,21 +442,18 @@ function BoardPage() {
     return calls;
   }, [visibleTasks, threadsById]);
 
-  const activeTask =
-    activeTaskId === null
-      ? null
-      : (tasks?.find((task) => task.id === activeTaskId) ?? null);
   const openCalls = columns.decision.length + threadCalls.length;
   const landedShown = showAllLanded
     ? columns.landed
     : columns.landed.slice(0, LANDED_VISIBLE);
 
-  const openTask = (task: DeckTask) => {
-    if (task.state === "decision") {
+  const openTask = (task: DeckCard) => {
+    if (task.call !== null || task.pendingCall !== null || task.history.length > 0) {
       setActiveTaskId(task.id);
+      navigate.toPluginPanel("board", { subPath: `task/${encodeURIComponent(task.id)}` });
       return;
     }
-    if (task.threadId !== null) threadActions.open(task.threadId);
+    if (task.threadId !== null) navigate.toThread(task.threadId);
   };
 
   return (
@@ -636,6 +465,8 @@ function BoardPage() {
           The first mate charts and moves work with <code>bb deck</code>.
         </p>
         <span className="ml-auto flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span>{tasks?.length ?? 0} of {page?.counts.total ?? "…"} cards loaded</span>
+          <span>{page?.counts.unresolved ?? "…"} unresolved · {page?.counts.unseen ?? "…"} unseen (all Deck)</span>
           <span>{columns.charted.length} charted</span>
           <span>·</span>
           <span>{columns.underway.length} underway</span>
@@ -644,7 +475,7 @@ function BoardPage() {
             type="button"
             onClick={() => {
               const first = columns.decision[0];
-              if (first !== undefined) setActiveTaskId(first.id);
+              if (first !== undefined) openTask(first);
             }}
             className={cn(
               "rounded-full border px-2 py-0.5",
@@ -658,7 +489,7 @@ function BoardPage() {
         </span>
       </header>
 
-      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-border px-4 py-1.5">
+      <div role="group" aria-label="Crew filters" className="flex items-center gap-1.5 overflow-x-auto border-b border-border px-4 py-1.5">
         {["all", ...crews].map((name) => {
           const count =
             name === "all"
@@ -737,7 +568,7 @@ function BoardPage() {
                       key={call.thread.id}
                       task={call.task}
                       thread={call.thread}
-                      onOpen={() => threadActions.open(call.thread.id)}
+                      onOpen={() => navigate.toThread(call.thread.id)}
                     />
                   ))
                 : null}
@@ -755,11 +586,12 @@ function BoardPage() {
         })}
       </div>
 
-      <DecisionDialog
-        task={activeTask}
-        onClose={() => setActiveTaskId(null)}
-        onAnswered={refetch}
-      />
+      <footer className="deck-board-footer">
+        <span>Lane and crew counts describe loaded cards. Action counts above cover the entire Deck.</span>
+        <Button variant="outline" size="sm" disabled={loading} onClick={refetch}>Refresh Deck</Button>
+        {page?.nextCursor ? <Button variant="outline" size="sm" disabled={loading} onClick={() => void loadMore()}>{loading ? "Loading…" : "Load more cards"}</Button> : null}
+      </footer>
+      <CardDialog taskId={activeTaskId} onClose={() => { setActiveTaskId(null); navigate.toPluginPanel("board"); }} onChanged={refetch} />
     </div>
   );
 }
@@ -772,4 +604,5 @@ export default definePluginApp((app) => {
     path: "board",
     component: BoardPage,
   });
+  app.slots.threadPanelAction({ id: "attention", title: "Needs my attention", icon: "ListTodo", layout: "flush", component: AttentionPanel });
 });

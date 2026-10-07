@@ -4,20 +4,29 @@
 
 Captain's Deck is a kanban board inside bb for work a first mate runs: charted
 tasks, what is underway, the captain's calls waiting on you, merges awaiting
-review, and landings. The board is read-only except for a Captain's Call —
-click the card, pick an option, add a note, and the answer is delivered to the
-first mate's thread.
+review, and landings. Every explicit captain action — do it, decide it,
+approve it — is recorded on the card with a receipt before any notice is sent,
+and **Needs my attention** puts the open ones in a tab beside your first mate
+conversation.
 
-The board is a projection. The first mate owns the state through the
-`bb deck` CLI; the board never invents work.
+The first mate owns the work lanes through the `bb deck` CLI; the board never
+invents work, and answering a call never moves a lane by itself.
 
 ## Install
 
 ```sh
-bb plugin install git:https://github.com/deimantasnork/bb-plugin-captains-deck.git@semver:^0.3.0
+bb plugin install git:https://github.com/t-kelly/bb-plugin-captains-deck.git@thomas/captains-deck-actions
 ```
 
-Requires bb 0.44 or newer.
+This fork branch is unreleased; no tag or catalog publication is implied.
+Requires bb 0.45 or newer. On an in-place update, the existing board is imported
+once into the plugin database and the old KV storage is left untouched.
+
+BB 0.45 refuses a same-ID managed Git/catalog source replacement. Do not remove
+an installed Deck to work around that refusal: removal deletes configuration
+and can remove data. Keep the existing installation until a supported
+non-destructive source-switch route is available. Direct-path moves preserve
+state, but that does not make a Git/catalog-to-path switch supported.
 
 ## The board
 
@@ -25,19 +34,51 @@ Requires bb 0.44 or newer.
 | --- | --- |
 | **Charted Next** | Briefed, not started |
 | **Underway** | Agents are on it (a failed task stays here with a failed badge) |
-| **Captain's Call** | Deck decisions answered in place, plus threads blocked on you |
+| **Captain's Call** | Cards with an unresolved DO, DECIDE or APPROVE, plus threads blocked on you |
 | **Awaiting Merge** | A PR is ready and waiting on review or merge |
 | **Landed** | Recently finished work |
 
-- **Crew tabs** filter the whole board by worker bot.
+- **Crew tabs** and lane counts cover the loaded board. **Load more cards**
+  pages the rest newest-activity first; the loaded/total indicator is explicit.
 - Cards show the task, its worker bot, live thread state (working, queued,
   needs input, failed), the provider, the PR link, and how long ago it moved.
-- A Captain's Call shows its options on the card and opens a decision board:
-  every option carries a one-line detail, the recommended one is marked, and
-  you can pick an option, answer in your own words, or both. Earlier calls
-  stay on the task.
+- A call shows its ask, recommendation and options on the card and opens the
+  same controls the tab uses: answer, complete a DO, defer, dismiss, reopen.
+  Earlier calls and their answers stay on the task.
 - A deck-linked thread that hits a native bb prompt appears under **Waiting in
   threads** in the same column; open it to answer.
+
+## Needs my attention
+
+Open the right panel in your configured first mate conversation, choose
+**New tab → Needs my attention**, and the open or due calls appear beside the
+chat. The tab is scoped to that conversation: opened anywhere else it loads no
+Deck contents. It separates *unresolved* from *unseen* — opening a call marks
+it seen and never resolves it — and pages Deferred and Closed views too.
+
+Each call shows its exact native source when one was recorded. A call raised
+from the CLI says so rather than inventing an origin. To record a reply the
+captain wrote in chat, pick that exact committed message from the candidate
+list; nothing is associated automatically, and ambiguous or conditional text
+stays open.
+
+## Captain actions
+
+| Action | Meaning |
+| --- | --- |
+| **Answer** | Records a decision or approval. On a DO it records clarification and the call stays open. |
+| **Complete** | Closes a DO only. It does not claim the underlying work landed. |
+| **Defer** | Keeps the call unresolved until a date, or indefinitely. |
+| **Dismiss** | Closes the call without approving or completing anything. |
+| **Reopen** | Starts a new generation of a closed call. |
+
+An approval records the exact scope the first mate stated; it never executes
+anything. Every action carries the card revision, call generation and an
+operation id, so a retry after an unclear response returns the original
+receipt instead of acting twice. The receipt is saved first: a failed, queued
+or uncertain first-mate notice is shown on the card with explicit
+reconciliation and retry, and an uncertain notice is never resent
+automatically.
 
 ## Driving it
 
@@ -45,7 +86,7 @@ Requires bb 0.44 or newer.
 bb deck chart --title "Dark mode" --brief "Settings toggle + tokens" --bot Designer
 bb deck start a1b2c3d4 --thread thr_abc123
 bb deck note  a1b2c3d4 --text "First pass done, contrast check running"
-bb deck ask   a1b2c3d4 --question "Ship behind a flag?" \
+bb deck ask   a1b2c3d4 --kind DECIDE --question "Ship behind a flag?" \
   --option "Behind a flag :: Additive and reversible" \
   --option "Straight to users :: Simpler surface, bigger blast radius" --recommend 1
 bb deck merge a1b2c3d4 --pr https://github.com/acme/app/pull/42
@@ -53,16 +94,21 @@ bb deck land  a1b2c3d4
 bb deck bearings
 ```
 
-Every command accepts `--json`. `bb deck list` shows all cards with ids.
-`bb deck bearings` prints the fleet digest: Charted Next, Underway, Captain's
-Call, Awaiting Merge, and Recently Landed.
+Every command accepts `--json`. `bb deck list` and `bb deck bearings` return
+one page of cards plus a `nextCursor`, newest activity first. Unresolved,
+unseen and due counts are global; lane digests cover the current page.
+`bb deck answer|complete|defer|dismiss|reopen` take
+`--revision`, `--generation` and `--operation`. `bb deck export --json` writes
+a full recovery snapshot and `bb deck import --snapshot '<json>'` restores it.
+Inside the first mate conversation, agents raise calls with the native
+`deck_call_post` tool and reproduce its block verbatim in a visible reply.
 Agents learn the workflow from the bundled `captains-deck` skill.
 
 ## Settings
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| First mate thread | empty | Answers to board decisions are sent to this thread as an agent-only note. The thread id looks like `thr_xxxx`; leave empty to only record answers on the board. |
+| First mate thread | empty | Hosts the Needs my attention tab and receives action notices as agent-only notes. The thread id looks like `thr_xxxx`; leave empty to only record actions on the board. |
 
 Set it with `bb plugin config captains-deck set firstMateThreadId thr_xxxx`, or
 from Settings → Installed plugins → Captain's Deck.
@@ -71,6 +117,7 @@ from Settings → Installed plugins → Captain's Deck.
 
 ```sh
 npm install
+npm test             # behavior regressions
 bb plugin dev        # rebuild + reload on save
 ```
 

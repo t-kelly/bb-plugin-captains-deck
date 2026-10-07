@@ -1,0 +1,32 @@
+.deck-attention { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; font-size: .8125rem; }
+.deck-attention-header { flex: 0 0 auto; padding: .75rem; border-bottom: 1px solid var(--border); }
+.deck-attention h1, .deck-detail h2 { font-size: 1rem; font-weight: 600; }
+.deck-attention h3, .deck-detail h3 { font-size: .8125rem; font-weight: 600; }
+.deck-attention-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: .75rem; }
+.deck-stack { display: flex; flex-direction: column; gap: .65rem; min-width: 0; }
+.deck-detail { padding: .5rem 0; min-width: 0; overflow-wrap: anywhere; font-size: .8125rem; }
+.deck-detail > section, .deck-detail > fieldset { padding-top: .65rem; border-top: 1px solid var(--border); }
+.deck-detail fieldset { min-width: 0; }
+.deck-detail fieldset:disabled { opacity: .7; }
+.deck-detail textarea, .deck-detail select, .deck-detail input[type="datetime-local"] { display: block; width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: .4rem; padding: .45rem .6rem; background: transparent; margin-top: .35rem; }
+.deck-detail textarea { resize: vertical; }
+.deck-detail input[type="checkbox"], .deck-detail input[type="radio"] { margin-right: .35rem; flex-shrink: 0; }
+.deck-detail dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .35rem .75rem; }
+.deck-detail dt { font-weight: 600; }
+.deck-detail dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.deck-detail details { padding: .5rem; border: 1px solid var(--border); border-radius: .4rem; }
+.deck-detail details summary { cursor: pointer; white-space: pre-wrap; }
+.deck-muted { color: var(--muted-foreground); font-size: .75rem; }
+.deck-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.deck-receipt { padding: .65rem; border: 1px solid var(--border); border-radius: .5rem; background: color-mix(in srgb, var(--muted) 30%, transparent); }
+.deck-receipt > * + * { margin-top: .4rem; }
+.deck-original { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: .75rem; max-width: 100%; }
+.deck-option { display: flex; align-items: flex-start; gap: .35rem; padding: .5rem; border: 1px solid var(--border); border-radius: .45rem; }
+.deck-option > span { flex: 1; min-width: 0; }
+.deck-option small { display: block; color: var(--muted-foreground); margin-top: .25rem; }
+.deck-attention-card { display: flex; flex-direction: column; gap: .35rem; padding: .75rem; border: 1px solid var(--border); border-radius: .5rem; background: var(--card); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.deck-attention-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.deck-attention-card:hover { border-color: var(--primary); }
+.deck-board-dialog { max-height: min(85dvh, 900px); overflow-y: auto; }
+.deck-board-footer { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem 1rem; border-top: 1px solid var(--border); font-size: .7rem; color: var(--muted-foreground); }
+@media (max-width: 480px) { .deck-detail dl { grid-template-columns: minmax(0, 1fr); } .deck-detail dd { margin-bottom: .35rem; } .deck-attention-header, .deck-attention-scroll { padding: .5rem; } .deck-actions > button { white-space: normal; height: auto; min-height: 2rem; text-align: left; } }

@@ -23,6 +23,12 @@
   "include": [
     "server.ts",
     "app.tsx",
+    "contract.ts",
+    "rpc.ts",
+    "model.ts",
+    "store.ts",
+    "evidence.ts",
+    "cli.ts",
     "components",
     "lib",
     "hooks"
