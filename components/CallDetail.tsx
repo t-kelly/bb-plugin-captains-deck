@@ -294,13 +294,17 @@ export function CallDetail({ taskId, threadId, onChanged, compact = false, onUna
   const selectedApprovalExpired = call?.approvalScope?.expiresAt !== undefined && call.approvalScope.expiresAt <= (selectedRow?.createdAt ?? Date.now());
   const publicationPending = task.pendingCall?.state === "pending";
   const publicationCancelled = task.pendingCall?.state === "failed" && task.pendingCall.error === "Cancelled";
+  const supportingDetails = call ? <>
+    {call.context ? compact ? <details><summary>Context</summary><div className="deck-context-body"><Markdown content={call.context} /></div></details> : <><h3>Context</h3><Markdown content={call.context} /></> : null}
+    {call.evidence.length ? <details open={compact ? undefined : true} aria-label="Evidence"><summary>Evidence ({call.evidence.length})</summary><ul>{call.evidence.map((item, index) => <li key={index}>{item.url ? <UrlLink href={item.url}>{item.label}</UrlLink> : item.label}{item.threadId ? <Button size="sm" variant="link" onClick={() => navigate.toThread(item.threadId!)}>Open evidence thread</Button> : null}{item.rowId ? <span className="deck-muted"> row {item.rowId} (thread link is not an exact row link)</span> : null}</li>)}</ul></details> : null}
+  </> : null;
   return <div className={`deck-detail deck-stack${compact ? " deck-call-popup" : ""}`}>
     <header><h2>{task.title}</h2><p className="deck-muted">{compact ? `work lane: ${task.state} · ${task.kind.toUpperCase()}` : `${task.id} · ${task.kind.toUpperCase()} · work lane: ${task.state} · revision ${task.revision}`}</p></header>
-    {compact ? <details><summary>Work details</summary><p className="deck-muted">{task.id} · revision {task.revision}</p>{task.brief ? <Markdown content={task.brief} /> : null}{task.threadId ? <Button variant="outline" size="sm" onClick={() => navigate.toThread(task.threadId!)}>Open worker thread</Button> : null}{task.prUrl ? <UrlLink href={task.prUrl}>Pull request</UrlLink> : null}</details> : <>
+    {!compact ? <>
       {task.brief ? <Markdown content={task.brief} /> : null}
       {task.threadId ? <Button variant="outline" size="sm" onClick={() => navigate.toThread(task.threadId!)}>Open worker thread</Button> : null}
       {task.prUrl ? <UrlLink href={task.prUrl}>Pull request</UrlLink> : null}
-    </>}
+    </> : null}
     {error ? <p role="alert">{error}</p> : null}
     {cancelledGeneration !== null ? <p role="status">Unpublished generation {cancelledGeneration} cancelled. The existing Captain call and work lane were preserved.</p> : null}
     {task.pendingCall ? <section className="deck-receipt" aria-label="Pending publication">
@@ -311,29 +315,33 @@ export function CallDetail({ taskId, threadId, onChanged, compact = false, onUna
       {!publicationCancelled || cancellation ? <Button size="sm" variant="outline" disabled={busy || !!uncertain} onClick={() => void cancelPublication()}>{cancellation ? "Retry same cancellation" : "Cancel unpublished call"}</Button> : null}
     </section> : cancellation ? <section className="deck-receipt"><p>Publication cancellation is unconfirmed; its operation key is retained.</p><Button disabled={busy || !!uncertain} onClick={() => void cancelPublication()}>Retry same cancellation</Button></section> : null}
     {call ? <>
-      <section className="deck-stack" aria-label="Current Captain call"><p><strong>{call.kind}</strong> · {call.status} · generation {call.generation}</p><h3>Ask</h3><Markdown content={call.ask} />
-        <p className="deck-muted">Asked {call.askedAt}{call.answeredAt ? ` · answered ${call.answeredAt}` : ""}</p>
+      <section className="deck-stack deck-call-summary" aria-label="Current Captain call"><p className="deck-call-kind"><strong>{call.kind}</strong> · {call.status} · generation {call.generation}</p>{compact ? null : <h3>Ask</h3>}<div className="deck-call-ask"><Markdown content={call.ask} /></div>
+        {!compact ? <p className="deck-muted">Asked {call.askedAt}{call.answeredAt ? ` · answered ${call.answeredAt}` : ""}</p> : null}
         {!open && call.options.length ? <ul>{call.options.map((option) => <li key={option.id}>{option.label}{option.id === call.recommendedId ? " — recommended" : ""}{option.detail ? <p>{option.detail}</p> : null}</li>)}</ul> : null}
         {call.answerLabel || call.answerNote ? <section aria-label="Current recorded response"><h3>{call.kind === "DO" && open ? "Latest recorded clarification" : "Recorded response"}</h3>{call.answerLabel ? <p>{call.answerLabel}</p> : null}{call.answerNote ? <pre className="deck-original">{call.answerNote}</pre> : null}</section> : null}
         {call.recommendation ? <><h3>Recommendation</h3><Markdown content={call.recommendation} /></> : null}
-        {call.context ? compact ? <details><summary>Context</summary><div className="deck-context-body"><Markdown content={call.context} /></div></details> : <><h3>Context</h3><Markdown content={call.context} /></> : null}
+        {!compact ? supportingDetails : null}
         {call.deferUntil !== null && call.status === "deferred" ? <p>Deferred until {new Date(call.deferUntil).toLocaleString()}</p> : call.status === "deferred" ? <p>Deferred indefinitely; still unresolved.</p> : null}
         {call.approvalScope ? <section className="deck-receipt" aria-label="Exact approval scope"><h3>Exact approval scope</h3><dl><dt>Action</dt><dd>{call.approvalScope.action}</dd><dt>Target</dt><dd>{call.approvalScope.target}</dd><dt>Constraints</dt><dd>{call.approvalScope.constraints}</dd><dt>Expiry</dt><dd>{call.approvalScope.expiresAt === undefined ? "No expiry specified" : new Date(call.approvalScope.expiresAt).toLocaleString()}</dd></dl>{expired ? <p role="alert">This approval scope has expired.</p> : null}<p>Recording approval does not execute external work.</p></section> : null}
-        {call.evidence.length ? <details open={compact ? undefined : true} aria-label="Evidence"><summary>Evidence ({call.evidence.length})</summary><ul>{call.evidence.map((item, index) => <li key={index}>{item.url ? <UrlLink href={item.url}>{item.label}</UrlLink> : item.label}{item.threadId ? <Button size="sm" variant="link" onClick={() => navigate.toThread(item.threadId!)}>Open evidence thread</Button> : null}{item.rowId ? <span className="deck-muted"> row {item.rowId} (thread link is not an exact row link)</span> : null}</li>)}</ul></details> : null}
       </section>
-      {compact ? <details><summary>Exact source and provenance</summary><CallSource key={`${taskId}:${call.generation}`} taskId={taskId} call={call} threadId={threadId} /></details> : <CallSource key={`${taskId}:${call.generation}`} taskId={taskId} call={call} threadId={threadId} />}
+      {!compact ? <CallSource key={`${taskId}:${call.generation}`} taskId={taskId} call={call} threadId={threadId} /> : null}
       {uncertain ? <section className="deck-receipt"><p role="status">An action response is unconfirmed. Its operation key is retained; retry will not repeat the action.</p><Button disabled={busy} onClick={() => void submit(uncertain)}>{busy ? "Saving…" : "Retry same action"}</Button><Button variant="outline" onClick={refresh}>Refresh saved state</Button></section> : null}
       {open ? <fieldset className="deck-stack" disabled={busy || !!uncertain || !!cancellation || publicationPending}>
-        <legend>Record a response</legend>
+        <legend className={compact ? "sr-only" : undefined}>Record a response</legend>
         <p className="deck-muted">Local client record, not a human attestation. {call.kind === "DO" ? "Answer records clarification; only Complete DO clears this action. Neither lands the work." : "Answer resolves this action only; it does not change the work lane."}</p>
         {call.options.length ? <div role="radiogroup" aria-label="Call options" className="deck-stack">{call.options.map((option) => <label key={option.id} className="deck-option"><input type="radio" name={`option-${taskId}`} checked={optionId === option.id} onChange={() => setOptionId(option.id)} /><span>{option.label}{option.id === call.recommendedId ? " — recommended" : ""}{option.detail ? <small>{option.detail}</small> : null}</span></label>)}<Button variant="ghost" size="sm" onClick={() => setOptionId(null)}>Clear option</Button></div> : null}
+        {compact && call.kind === "DO" ? <div className="deck-primary-actions"><Button onClick={() => action("complete")}>Complete DO</Button></div> : null}
         <label>{call.kind === "APPROVE" ? "Response (optional note)" : "Response"}<textarea aria-label="Response" rows={compact ? 2 : 3} maxLength={16000} value={response} onChange={(event) => setResponse(event.target.value)} /></label>
-        <div className="deck-actions">{call.kind === "APPROVE" ? <><Button disabled={expired} onClick={() => action("answer", "approve")}>Approve exact scope</Button><Button variant="outline" onClick={() => action("answer", "decline")}>Decline exact scope</Button></> : <Button variant={compact && call.kind === "DO" ? "outline" : "default"} disabled={!response.trim() && !optionId} onClick={() => action("answer")}>{call.kind === "DO" ? "Save clarification" : "Save answer"}</Button>}{call.kind === "DO" ? <Button onClick={() => action("complete")}>Complete DO</Button> : null}</div>
+        <div className={compact ? call.kind === "DO" ? "deck-secondary-actions" : "deck-primary-actions" : "deck-actions"}>{call.kind === "APPROVE" ? <><Button variant={compact ? "outline" : "default"} disabled={expired} onClick={() => action("answer", "approve")}>Approve exact scope</Button><Button variant="outline" onClick={() => action("answer", "decline")}>Decline exact scope</Button></> : <Button variant={compact && call.kind === "DO" ? "outline" : "default"} disabled={!response.trim() && !optionId} onClick={() => action("answer")}>{call.kind === "DO" ? "Save clarification" : "Save answer"}</Button>}{call.kind === "DO" && !compact ? <Button onClick={() => action("complete")}>Complete DO</Button> : null}</div>
         <details open={compact ? undefined : true}><summary>Defer or dismiss</summary><div className="deck-stack">
           <label>Defer until<input aria-label="Defer until" type="datetime-local" value={deferDate} disabled={indefinite} onChange={(event) => setDeferDate(event.target.value)} /></label><label><input type="checkbox" checked={indefinite} onChange={(event) => setIndefinite(event.target.checked)} /> Defer indefinitely (still unresolved)</label><Button variant="outline" onClick={() => action("defer")}>Defer call</Button>
           <Button variant="outline" onClick={() => action("dismiss")}>Dismiss without approval or completion</Button>
         </div></details>
       </fieldset> : <Button disabled={busy || !!uncertain || !!cancellation || publicationPending} onClick={() => action("reopen")}>Reopen call as a new generation</Button>}
+      {compact ? <>
+        {supportingDetails}
+        <details><summary>Exact source and provenance</summary><CallSource key={`${taskId}:${call.generation}`} taskId={taskId} call={call} threadId={threadId} /></details>
+      </> : null}
       {open ? <details open={compact ? undefined : true} className="deck-stack" aria-label="Associate native chat response"><summary>Associate a committed chat response</summary><p>No chat row is associated automatically. Select the exact original row for this card and generation {call.generation}. Selection does not establish keyboard-human authority.</p>{producerThread && call.replyThreadId === producerThread ? <Button variant="outline" size="sm" disabled={candidateBusy} onClick={() => void loadCandidates(true)}>{candidates === null ? "Browse native responses" : "Refresh native responses"}</Button> : <p>No matching reply thread was bound to this call; native association is unavailable.</p>}
         {candidateError ? <p role="alert">Native responses unavailable: {candidateError}. Oversized rows cannot be substituted with truncated text.</p> : null}
         {omittedRows.map((ref) => <p key={ref.rowId} className="deck-muted">Native row {ref.rowId} exceeds the association limit; no truncated substitute is used. <Button variant="link" size="sm" onClick={() => navigate.toThread(ref.threadId)}>Open original conversation</Button></p>)}
@@ -345,8 +353,9 @@ export function CallDetail({ taskId, threadId, onChanged, compact = false, onUna
         <Button disabled={!selectedRow || busy || !!uncertain || !!cancellation || publicationPending || (call.kind === "APPROVE" && (!approval || (approval === "approve" && selectedApprovalExpired)))} onClick={associate}>Associate selected row as {call.kind === "DO" ? "clarification" : "answer"}</Button>
       </details> : null}
     </> : <p>No current Captain call. Work and worker status do not create one.</p>}
+    {compact ? <details><summary>Work details</summary><p className="deck-muted">{task.id} · revision {task.revision}</p>{call ? <p className="deck-muted">Asked {call.askedAt}{call.answeredAt ? ` · answered ${call.answeredAt}` : ""}</p> : null}{task.brief ? <Markdown content={task.brief} /> : null}{task.threadId ? <Button variant="outline" size="sm" onClick={() => navigate.toThread(task.threadId!)}>Open worker thread</Button> : null}{task.prUrl ? <UrlLink href={task.prUrl}>Pull request</UrlLink> : null}</details> : null}
     {task.history.length ? <section className="deck-stack" aria-label="Earlier calls">
-      <h3>Earlier calls ({task.history.length})</h3>
+      <details open={compact ? undefined : true}><summary>Earlier calls ({task.history.length})</summary><div className="deck-stack">
       {task.history.slice(0, historyCount).map((previous) => <details key={previous.generation}>
         <summary>{previous.kind} · generation {previous.generation} · {previous.status} · {previous.ask}</summary>
         <div className="deck-stack">
@@ -363,7 +372,8 @@ export function CallDetail({ taskId, threadId, onChanged, compact = false, onUna
         </div>
       </details>)}
       {historyCount < task.history.length ? <Button variant="outline" size="sm" onClick={() => setHistoryCount((count) => count + 5)}>Load more earlier calls</Button> : null}
+      </div></details>
     </section> : null}
-    <section className="deck-stack" aria-label="Action receipts"><h3>Action receipts and notice delivery</h3>{receipts.length === 0 ? <p>No recorded action receipts.</p> : null}{receipts.map((receipt) => <ReceiptDetail key={receipt.id} receipt={receipt} threadId={threadId} onUpdated={(updated) => setReceipts((previous) => previous.map((item) => item.id === updated.id ? updated : item))} />)}{receiptCursor ? <Button variant="outline" size="sm" disabled={receiptBusy} onClick={() => void loadReceipts()}>Load more receipts</Button> : null}</section>
+    <section className="deck-stack" aria-label="Action receipts"><details open={compact ? undefined : true}><summary>Action receipts and notice delivery ({receipts.length}{receiptCursor ? "+" : ""}){receipts[0] ? ` · ${DELIVERY_LABEL[receipts[0].delivery.state]}` : ""}</summary><div className="deck-stack">{receipts.length === 0 ? <p>No recorded action receipts.</p> : null}{receipts.map((receipt) => <ReceiptDetail key={receipt.id} receipt={receipt} threadId={threadId} onUpdated={(updated) => setReceipts((previous) => previous.map((item) => item.id === updated.id ? updated : item))} />)}{receiptCursor ? <Button variant="outline" size="sm" disabled={receiptBusy} onClick={() => void loadReceipts()}>Load more receipts</Button> : null}</div></details></section>
   </div>;
 }

@@ -389,6 +389,7 @@ const PERSISTENT_DRAWER_FOCUSABLE_SELECTOR = [
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
+  "summary",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 
@@ -407,9 +408,14 @@ const persistentDrawerStacks = new WeakMap<Document, PersistentDrawerStack>();
 function getDrawerFocusableElements(panel: HTMLElement): HTMLElement[] {
   return Array.from(
     panel.querySelectorAll<HTMLElement>(PERSISTENT_DRAWER_FOCUSABLE_SELECTOR),
-  ).filter(
-    (element) => element.closest('[aria-hidden="true"], [inert]') === null,
-  );
+  ).filter((element) => {
+    if (element.matches(":disabled") || element.getClientRects().length === 0 || element.closest('[aria-hidden="true"], [inert]') !== null) return false;
+    // Closed disclosures can retain descendant rects, but cannot focus them.
+    for (let ancestor = element.parentElement; ancestor && ancestor !== panel; ancestor = ancestor.parentElement) {
+      if (ancestor instanceof HTMLDetailsElement && !ancestor.open && ancestor.querySelector("summary") !== element) return false;
+    }
+    return true;
+  });
 }
 
 function activeElementIsInAnotherOverlay(
@@ -485,6 +491,7 @@ function registerOpenDrawer(
         return;
       }
       if (event.key === "Escape") {
+        if (activeElementIsInAnotherOverlay(ownerDocument.activeElement, panel)) return;
         event.preventDefault();
         topEntry.requestClose();
       } else if (event.key === "Tab") {
@@ -493,7 +500,8 @@ function registerOpenDrawer(
     };
     stack = { entries, handleKeyDown };
     persistentDrawerStacks.set(ownerDocument, stack);
-    ownerDocument.addEventListener("keydown", handleKeyDown);
+    // The enclosing host panel must not consume this topmost sheet's keys.
+    ownerDocument.addEventListener("keydown", handleKeyDown, true);
   }
   stack.entries.push(entry);
 
@@ -507,7 +515,7 @@ function registerOpenDrawer(
       currentStack.entries.splice(index, 1);
     }
     if (currentStack.entries.length === 0) {
-      ownerDocument.removeEventListener("keydown", currentStack.handleKeyDown);
+      ownerDocument.removeEventListener("keydown", currentStack.handleKeyDown, true);
       persistentDrawerStacks.delete(ownerDocument);
     }
   };

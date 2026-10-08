@@ -50,11 +50,26 @@ non-destructive source-switch route is available.
 
 Open the right panel in your configured first mate conversation, choose
 **New tab → Needs my attention**, and the open or due calls appear beside the
-chat. Selecting a call opens a compact dialog inside the tab without replacing
-the list. Context, evidence and exact provenance remain available in expandable
-sections; long context has its own bounded scroll area. Escape, Close or Back
-returns focus to the selected call. If the card is removed or no longer carries
-a call, the dialog closes and the list refreshes without a handler error.
+chat. Selecting a call opens a dialog centered over the whole bb window; the
+list and chat remain mounted beneath its dimmed overlay. Compact screens use
+a full-viewport sheet with one scroll region. There is one visible **Close**
+control, and Escape closes only the call review. Focus returns to the selected
+row, or to the list heading if that row is gone.
+
+The title, call kind, ask and applicable primary action lead the review.
+**Complete DO** is primary for a DO; clarification stays secondary. A DECIDE
+shows choices and recommendation before **Save answer**, without selecting a
+recommended choice automatically. An APPROVE always shows the exact action,
+target, constraints and expiry before equally weighted approve/decline
+controls. Context, exact source/provenance, evidence, work details, earlier
+calls and receipts use disclosures. Long context has a bounded scroll area
+on desktop and joins the main scroll region on compact screens.
+
+Unsent response text is not retained across closing the review or replacing
+its call generation; closing never submits it. Unconfirmed submitted actions
+retain their existing retry identity separately. If the card is removed or
+no longer carries a call, the review closes and the list refreshes without a
+handler error.
 
 The tab is scoped to that conversation: opened anywhere else it loads no Deck
 contents. It separates *unresolved* from *unseen* — opening a call marks it seen

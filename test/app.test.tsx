@@ -114,11 +114,11 @@ async function openFirst() {
 }
 
 async function expandSection(title: string) {
-  await userEvent.click(screen.getByText(title, { selector: "summary" }));
+  await userEvent.click(screen.getByText(new RegExp(`^${title}`), { selector: "summary" }));
 }
 
 beforeEach(() => { sessionStorage.clear(); localStorage.clear(); });
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("shared Deck and native attention controls", () => {
   it("keeps the list mounted behind a dialog and restores its trigger on Escape", async () => {
@@ -127,15 +127,75 @@ describe("shared Deck and native attention controls", () => {
     const trigger = await screen.findByRole("button", { name: /Task 1.*Please handle call 1/ });
     trigger.focus();
     await userEvent.keyboard("{Enter}");
-    const dialog = await screen.findByRole("dialog", { name: "Captain's Call" });
+    const dialog = await screen.findByRole("dialog", { name: "DO call: Task 1" });
     await within(dialog).findByRole("button", { name: "Complete DO" });
     expect(trigger.isConnected).toBe(true);
     expect(document.querySelectorAll(".deck-attention-card")).toHaveLength(2);
-    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" }));
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
     expect(screen.getByRole("button", { name: /Task 2.*Please handle call 2/ })).toBeTruthy();
+  });
+
+  it("Escape closes only the compact call sheet before the enclosing host panel handles it", async () => {
+    vi.stubGlobal("matchMedia", (media: string) => ({
+      matches: media === "(max-width: 767px)", media,
+      addEventListener() {}, removeEventListener() {},
+    }));
+    let hostClosed = false;
+    const hostEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        hostClosed = true;
+        event.preventDefault();
+      }
+    };
+    document.addEventListener("keydown", hostEscape);
+    try {
+      await attention(host());
+      const trigger = await screen.findByRole("button", { name: /Task 1.*Please handle call 1/ });
+      await userEvent.click(trigger);
+      await screen.findByRole("button", { name: "Complete DO" });
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(hostClosed).toBe(false);
+      await waitFor(() => expect(document.activeElement).toBe(trigger));
+    } finally {
+      document.removeEventListener("keydown", hostEscape);
+    }
+  });
+
+  it("closing an approval does not submit its unsent note or retain it on reopen", async () => {
+    await attention(host([card(1, "APPROVE")]));
+    const trigger = await screen.findByRole("button", { name: /Task 1.*Please handle call 1/ });
+    await userEvent.click(trigger);
+    await userEvent.type(await screen.findByRole("textbox", { name: "Response" }), "This draft is not an approval");
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+    await userEvent.click(trigger);
+    const response = await screen.findByRole("textbox", { name: "Response" }) as HTMLTextAreaElement;
+    expect(response.value).toBe("");
+    expect(screen.queryByText("Action receipt saved")).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve exact scope" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reopen call as a new generation" })).toBeNull();
+  });
+
+  it("updates an open review's accessible name and controls when its call kind is replaced", async () => {
+    const fake = host();
+    const mounted = await attention(fake);
+    await openFirst();
+    await userEvent.type(screen.getByRole("textbox", { name: "Response" }), "Old DO draft");
+    const replacement = card(1, "APPROVE");
+    replacement.revision = 2;
+    replacement.call!.generation = 2;
+    replacement.nextGeneration = 3;
+    fake.replace([replacement]);
+    await act(async () => { mounted.behavior.emitRealtime("deck-changed", {}); });
+    const dialog = await screen.findByRole("dialog", { name: "APPROVE call: Task 1" });
+    await within(dialog).findByRole("button", { name: "Approve exact scope" });
+    expect(within(dialog).queryByRole("button", { name: "Complete DO" })).toBeNull();
+    expect((within(dialog).getByRole("textbox", { name: "Response" }) as HTMLTextAreaElement).value).toBe("");
   });
 
   it("closes a removed selection quietly and refreshes its list", async () => {
@@ -187,7 +247,7 @@ describe("shared Deck and native attention controls", () => {
     await userEvent.click(within(dialog).getByText("Context", { selector: "summary" }));
     expect(context.open).toBe(true);
     expect(context.textContent).toContain(task.call!.context);
-    await userEvent.click(within(dialog).getByRole("button", { name: "Back to calls" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
   it("keeps DO clarification unresolved and only Complete DO clears the action, never the work", async () => {
@@ -202,7 +262,7 @@ describe("shared Deck and native attention controls", () => {
     await userEvent.click(screen.getByRole("button", { name: "Complete DO" }));
     await screen.findByRole("button", { name: "Reopen call as a new generation" });
     expect(screen.getByText(/work lane: underway/)).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Back to calls" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await screen.findByText(/No explicit open or due Captain calls/);
   });
 
@@ -215,7 +275,7 @@ describe("shared Deck and native attention controls", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: /Defer indefinitely/ }));
     await userEvent.click(screen.getByRole("button", { name: "Defer call" }));
     await screen.findByText("Deferred indefinitely; still unresolved.");
-    await userEvent.click(screen.getByRole("button", { name: "Back to calls" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await screen.findByText(/No explicit open or due/);
     await userEvent.click(screen.getByRole("button", { name: /Deferred \(1\)/ }));
     await openFirst();
@@ -241,7 +301,8 @@ describe("shared Deck and native attention controls", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save clarification" }));
     await screen.findByText("Action receipt saved");
     expect(screen.queryByText(/Answer sent/)).toBeNull();
-    expect(screen.getByText(delivery === "failed" ? /Notice failed/ : delivery === "uncertain" ? /Notice delivery uncertain/ : /Notice queued/)).toBeTruthy();
+    await expandSection("Action receipts and notice delivery");
+    expect(within(screen.getByRole("region", { name: "Action receipts" })).getByRole("status").textContent).toMatch(delivery === "failed" ? /Notice failed/ : delivery === "uncertain" ? /Notice delivery uncertain/ : /Notice queued/);
     const retry = screen.getByRole("button", { name: "Retry notice only" }) as HTMLButtonElement;
     expect(retry.disabled).toBe(true);
     await userEvent.click(screen.getByRole("checkbox", { name: /retrying the notice may deliver a duplicate/ }));
@@ -427,8 +488,10 @@ describe("shared Deck and native attention controls", () => {
     fake.rpc.deck_receipts = () => ({ receipts: [makeReceipt(2)], nextCursor: null });
     await attention(fake); await openFirst();
     expect(screen.queryByText(/Historic ask 7/)).toBeNull();
+    await expandSection("Earlier calls");
     await userEvent.click(screen.getByRole("button", { name: "Load more earlier calls" }));
     expect(screen.getByText(/Historic ask 7/, { selector: "summary" })).toBeTruthy();
+    await expandSection("Action receipts and notice delivery");
     await userEvent.click(screen.getByRole("button", { name: "Load more receipts" }));
     await screen.findByText("Saved response 2");
     expect(screen.getByText("Saved response 1")).toBeTruthy();

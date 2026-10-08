@@ -30,18 +30,28 @@
 .deck-board-dialog { max-height: min(85dvh, 900px); overflow-y: auto; }
 .deck-board-footer { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem 1rem; border-top: 1px solid var(--border); font-size: .7rem; color: var(--muted-foreground); }
 @media (max-width: 480px) { .deck-detail dl { grid-template-columns: minmax(0, 1fr); } .deck-detail dd { margin-bottom: .35rem; } .deck-attention-header, .deck-attention-scroll { padding: .5rem; } .deck-actions > button { white-space: normal; height: auto; min-height: 2rem; text-align: left; } }
-.deck-attention { position: relative; isolation: isolate; }
-.deck-attention-dialog { display: flex; flex-direction: column; gap: 0; width: calc(100% - 1rem); max-width: 28rem; max-height: calc(100% - 1rem); padding: 0; overflow: hidden; border-radius: .6rem; }
-.deck-popup-toolbar { display: flex; flex-shrink: 0; align-items: center; gap: .25rem; padding: .5rem 2.5rem .5rem .5rem; border-bottom: 1px solid var(--border); }
-.deck-popup-toolbar button { white-space: normal; height: auto; min-height: 1.75rem; text-align: left; }
-.deck-popup-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: .75rem; }
-.deck-call-popup { padding: 0; gap: .5rem; font-size: .8125rem; }
-.deck-call-popup h2 { font-size: 1rem; font-weight: 600; line-height: 1.35; }
+.deck-attention-dialog { display: flex; flex-direction: column; gap: 0; width: min(42rem, calc(100vw - 3rem)); max-width: 42rem; max-height: min(88dvh, 900px); padding: 0; overflow: hidden; border-radius: .75rem; }
+.deck-popup-toolbar { display: flex; flex-shrink: 0; justify-content: flex-end; padding: .5rem .75rem; }
+.deck-popup-toolbar button { min-height: 2.25rem; }
+.deck-popup-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 1.5rem 1.5rem; }
+.deck-call-popup { padding: 0; gap: 1rem; font-size: .875rem; }
+.deck-call-popup h2 { font-size: 1.25rem; font-weight: 600; line-height: 1.35; }
 .deck-call-popup details { padding: .45rem .55rem; background: color-mix(in srgb, var(--muted) 20%, transparent); }
 .deck-call-popup details > :not(summary) { margin-top: .5rem; }
 .deck-call-popup .deck-option:has(input:checked) { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, transparent); }
-.deck-call-popup .deck-actions { gap: .4rem; }
-.deck-call-popup .deck-actions > button { flex: 1 1 auto; }
+.deck-call-popup .deck-primary-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.deck-call-popup .deck-primary-actions > button { min-height: 2.5rem; }
 .deck-call-popup .deck-receipt { padding: .5rem; }
 .deck-call-popup summary { font-size: .75rem; font-weight: 500; }
 .deck-context-body { max-height: 12rem; overflow-y: auto; overscroll-behavior: contain; }
+.deck-call-popup > .deck-call-summary { border-top: 0; padding-top: 0; }
+.deck-call-popup .deck-call-kind { font-weight: 600; color: var(--foreground); }
+.deck-call-popup .deck-call-ask { font-size: 1rem; line-height: 1.5; }
+.deck-call-popup .deck-secondary-actions { margin-top: .5rem; }
+@media (max-width: 767px) {
+  .deck-attention-dialog { width: 100%; max-width: none; max-height: none; padding: 0; border-radius: 0; }
+  .deck-popup-scroll { padding: 0 1rem max(1rem, env(safe-area-inset-bottom)); }
+  .deck-call-popup .deck-primary-actions { flex-direction: column; }
+  .deck-call-popup .deck-primary-actions > button { width: 100%; }
+  .deck-context-body { max-height: none; overflow: visible; }
+}

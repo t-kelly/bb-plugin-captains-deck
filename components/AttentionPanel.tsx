@@ -13,18 +13,26 @@ function ScopedAttention({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
   const [view, setView] = useState<"attention" | "deferred" | "closed">("attention");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [panel, setPanel] = useState<HTMLDivElement | null>(null);
+  const [dialogLabel, setDialogLabel] = useState("Captain's Call");
   const [notice, setNotice] = useState<string | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
   const listTitle = useRef<HTMLHeadingElement | null>(null);
   const { tasks, page, loading, error, loadMore, refresh } = useDeckPages(threadId, view);
+  useEffect(() => {
+    const selected = tasks?.find((task) => task.id === activeTaskId);
+    if (selected?.call) setDialogLabel(`${selected.call.kind} call: ${selected.title}`);
+  }, [tasks, activeTaskId]);
   const unavailable = useCallback(() => {
     setActiveTaskId(null);
     setNotice("This call is no longer available. The list has been refreshed.");
     refresh();
   }, [refresh]);
-  return <Dialog contained open={activeTaskId !== null} onOpenChange={(open) => { if (!open) setActiveTaskId(null); }}>
-    <div ref={setPanel} className="deck-attention">
+  const restoreFocus = useCallback(() => {
+    if (opener.current?.isConnected) opener.current.focus();
+    else listTitle.current?.focus();
+  }, []);
+  return <Dialog open={activeTaskId !== null} onOpenChange={(open) => { if (!open) setActiveTaskId(null); }}>
+    <div className="deck-attention">
       <header className="deck-attention-header deck-stack">
         <h1 ref={listTitle} tabIndex={-1}>Needs my attention</h1>
         <p className="deck-muted">Explicit Captain calls only. Your conversation stays beside this tab.</p>
@@ -43,33 +51,31 @@ function ScopedAttention({ threadId }: { threadId: string }) {
           {tasks === null ? <p>Loading calls…</p> : tasks.length === 0 ? <p>{view === "attention" ? "No explicit open or due Captain calls. Worker failures and finished notices do not belong here." : `No ${view} calls.`}</p> : tasks.map((task) => <button type="button" key={task.id} className="deck-attention-card" aria-haspopup="dialog" aria-expanded={activeTaskId === task.id} onClick={(event) => {
             opener.current = event.currentTarget;
             setNotice(null);
+            setDialogLabel(`${task.call?.kind ?? "Captain"} call: ${task.title}`);
             setActiveTaskId(task.id);
           }}>
-            <span className="deck-muted">{task.call?.kind} · {task.call?.status} · work: {task.state}{task.call && task.seenGeneration < task.call.generation ? " · unseen" : ""}</span>
             <strong>{task.title}</strong>
+            <span>{task.call?.kind} · {task.call?.status}{task.call && task.seenGeneration < task.call.generation ? " · unseen" : ""}</span>
             <span>{task.call?.ask}</span>
-            {task.call?.recommendation ? <span className="deck-muted">Recommendation: {task.call.recommendation}</span> : null}
-            {task.call?.approvalScope ? <span className="deck-muted">Scope: {task.call.approvalScope.action} · {task.call.approvalScope.target}</span> : null}
+            <span className="deck-muted">Work lane: {task.state}</span>
           </button>)}
           {tasks ? <p className="deck-muted">Showing {tasks.length} of {page ? view === "attention" ? page.counts.attention : view === "deferred" ? page.counts.deferred : page.counts.closed : "…"} calls</p> : null}
           {page?.nextCursor ? <Button variant="outline" disabled={loading} onClick={() => void loadMore()}>{loading ? "Loading…" : "Load more calls"}</Button> : null}
         </div>
       </main>
-      {activeTaskId && panel ? <DialogContent container={panel} className="deck-attention-dialog" onCloseAutoFocus={(event) => {
+      <DialogContent fullScreenOnCompact hideCloseButton className="deck-attention-dialog" onCloseAutoFocus={(event) => {
         event.preventDefault();
-        if (opener.current?.isConnected) opener.current.focus();
-        else listTitle.current?.focus();
-      }}>
-        <DialogTitle className="sr-only">Captain&apos;s Call</DialogTitle>
+      }} onAfterCloseAutoFocus={restoreFocus}>
+        <DialogTitle className="sr-only">{dialogLabel}</DialogTitle>
         <DialogDescription className="sr-only">Review the call and record an action. Work lanes remain independent.</DialogDescription>
         <div className="deck-popup-toolbar">
-          <DialogClose asChild><Button variant="ghost" size="sm">Back to calls</Button></DialogClose>
-          <Button variant="ghost" size="sm" onClick={() => navigate.toPluginPanel("board", { subPath: `task/${encodeURIComponent(activeTaskId)}` })}>Open card on full Deck</Button>
+          <DialogClose asChild><Button variant="ghost" size="sm" autoFocus>Close</Button></DialogClose>
         </div>
         <div className="deck-popup-scroll">
-          <CallDetail key={activeTaskId} taskId={activeTaskId} threadId={threadId} compact onUnavailable={unavailable} onChanged={refresh} />
+          {activeTaskId ? <CallDetail key={activeTaskId} taskId={activeTaskId} threadId={threadId} compact onUnavailable={unavailable} onChanged={refresh} /> : null}
+          {activeTaskId ? <Button variant="link" size="sm" onClick={() => navigate.toPluginPanel("board", { subPath: `task/${encodeURIComponent(activeTaskId)}` })}>Open card on full Deck</Button> : null}
         </div>
-      </DialogContent> : null}
+      </DialogContent>
     </div>
   </Dialog>;
 }
