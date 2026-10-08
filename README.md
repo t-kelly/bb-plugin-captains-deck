@@ -50,9 +50,15 @@ non-destructive source-switch route is available.
 
 Open the right panel in your configured first mate conversation, choose
 **New tab → Needs my attention**, and the open or due calls appear beside the
-chat. The tab is scoped to that conversation: opened anywhere else it loads no
-Deck contents. It separates *unresolved* from *unseen* — opening a call marks
-it seen and never resolves it — and pages Deferred and Closed views too.
+chat. Selecting a call opens a compact dialog inside the tab without replacing
+the list. Context, evidence and exact provenance remain available in expandable
+sections; long context has its own bounded scroll area. Escape, Close or Back
+returns focus to the selected call. If the card is removed or no longer carries
+a call, the dialog closes and the list refreshes without a handler error.
+
+The tab is scoped to that conversation: opened anywhere else it loads no Deck
+contents. It separates *unresolved* from *unseen* — opening a call marks it seen
+and never resolves it — and pages Deferred and Closed views too.
 
 Each call shows its exact native source when one was recorded. A call raised
 from the CLI says so rather than inventing an origin. To record a reply the

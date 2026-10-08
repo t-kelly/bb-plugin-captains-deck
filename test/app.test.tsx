@@ -78,14 +78,14 @@ function host(initial = [card()]): FakeHost {
     getSetup: () => ({ firstMateThreadId: "cos", producer: { threadId: "cos", projectId: "project", title: "Synthetic CoS" }, valid: true, reason: null }),
     deck_calls: (input) => page(input.cursor, input.view),
     deck_board: (input: { cursor?: string } | null) => page(input?.cursor),
-    deck_get: (input: { taskId: string }) => ({ task: structuredClone(tasks.find((task) => task.id === input.taskId)!), receipts: structuredClone(receipts.filter((receipt) => receipt.taskId === input.taskId).slice(0, 30)), nextCursor: null }),
-    deck_seen: (input: { taskId: string; generation: number }) => { const task = tasks.find((task) => task.id === input.taskId)!; task.seenGeneration = input.generation; return structuredClone(task); },
+    deck_get: (input: { taskId: string }) => ({ task: structuredClone(tasks.find((task) => task.id === input.taskId) ?? null), receipts: structuredClone(receipts.filter((receipt) => receipt.taskId === input.taskId).slice(0, 30)), nextCursor: null }),
+    deck_seen: (input: { taskId: string; generation: number }) => { const task = tasks.find((task) => task.id === input.taskId); if (!task?.call || task.call.generation !== input.generation) return null; task.seenGeneration = input.generation; return structuredClone(task); },
     deck_action: action,
     deck_answer: action,
     deck_associate: (input: Omit<ActionInput, "response"> & { source: NonNullable<ActionInput["source"]> }) => action({ ...input, response: nativeRows.find((row) => row.rowId === input.source.rowId)!.text }),
     deck_source: (input: { taskId: string; offset?: number; limit?: number }) => {
-      const task = tasks.find((task) => task.id === input.taskId)!;
-      if (!task.call?.source) return null;
+      const task = tasks.find((task) => task.id === input.taskId);
+      if (!task?.call?.source) return null;
       const offset = input.offset ?? 0, end = Math.min(sourceText.length, offset + (input.limit ?? 8000));
       return { status: "verified" as const, ref: task.call.source, text: sourceText.slice(offset, end), nextOffset: end < sourceText.length ? end : null, totalLength: sourceText.length, sourceCreatedAt: NOW };
     },
@@ -113,10 +113,83 @@ async function openFirst() {
   await screen.findByRole("button", { name: "Complete DO" });
 }
 
+async function expandSection(title: string) {
+  await userEvent.click(screen.getByText(title, { selector: "summary" }));
+}
+
 beforeEach(() => { sessionStorage.clear(); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("shared Deck and native attention controls", () => {
+  it("keeps the list mounted behind a dialog and restores its trigger on Escape", async () => {
+    const second = card(2);
+    await attention(host([card(), second]));
+    const trigger = await screen.findByRole("button", { name: /Task 1.*Please handle call 1/ });
+    trigger.focus();
+    await userEvent.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog", { name: "Captain's Call" });
+    await within(dialog).findByRole("button", { name: "Complete DO" });
+    expect(trigger.isConnected).toBe(true);
+    expect(document.querySelectorAll(".deck-attention-card")).toHaveLength(2);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(screen.getByRole("button", { name: /Task 2.*Please handle call 2/ })).toBeTruthy();
+  });
+
+  it("closes a removed selection quietly and refreshes its list", async () => {
+    const fake = host();
+    const mounted = await attention(fake);
+    await openFirst();
+    fake.replace([]);
+    await act(async () => { mounted.behavior.emitRealtime("deck-changed", {}); });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await screen.findByText(/No explicit open or due Captain calls/);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/No deck task/)).toBeNull();
+  });
+
+  it("closes when the card no longer carries a call", async () => {
+    const fake = host();
+    const mounted = await attention(fake);
+    await openFirst();
+    const remaining = card(); remaining.call = null;
+    fake.replace([remaining]);
+    await act(async () => { mounted.behavior.emitRealtime("deck-changed", {}); });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it.each(["DO", "DECIDE", "APPROVE"] as const)("shows only the %s primary controls and keeps long context collapsed", async (kind) => {
+    const task = card(1, kind);
+    task.call!.context = "Long context paragraph. ".repeat(500);
+    await attention(host([task]));
+    await userEvent.click(await screen.findByRole("button", { name: /Task 1.*Please handle call 1/ }));
+    const dialog = await screen.findByRole("dialog");
+    if (kind === "DO") {
+      await within(dialog).findByRole("button", { name: "Complete DO" });
+      expect(within(dialog).getByRole("button", { name: "Save clarification" })).toBeTruthy();
+      expect(within(dialog).queryByRole("button", { name: "Approve exact scope" })).toBeNull();
+      expect(within(dialog).queryByRole("button", { name: "Save answer" })).toBeNull();
+    } else if (kind === "DECIDE") {
+      await within(dialog).findByRole("button", { name: "Save answer" });
+      expect(within(dialog).queryByRole("button", { name: "Complete DO" })).toBeNull();
+      expect(within(dialog).queryByRole("button", { name: "Approve exact scope" })).toBeNull();
+    } else {
+      await within(dialog).findByRole("button", { name: "Approve exact scope" });
+      expect(within(dialog).getByRole("button", { name: "Decline exact scope" })).toBeTruthy();
+      expect(within(dialog).queryByRole("button", { name: "Complete DO" })).toBeNull();
+      expect(within(dialog).queryByRole("button", { name: "Save answer" })).toBeNull();
+    }
+    const context = within(dialog).getByText("Context", { selector: "summary" }).parentElement as HTMLDetailsElement;
+    expect(context.open).toBe(false);
+    await userEvent.click(within(dialog).getByText("Context", { selector: "summary" }));
+    expect(context.open).toBe(true);
+    expect(context.textContent).toContain(task.call!.context);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Back to calls" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
   it("keeps DO clarification unresolved and only Complete DO clears the action, never the work", async () => {
     const fake = host();
     await attention(fake);
@@ -136,6 +209,7 @@ describe("shared Deck and native attention controls", () => {
   it("defer requires future date or explicit indefinite and dismiss is not completion", async () => {
     await attention(host());
     await openFirst();
+    await expandSection("Defer or dismiss");
     await userEvent.click(screen.getByRole("button", { name: "Defer call" }));
     expect(screen.getByRole("alert").textContent).toMatch(/Choose a future date/);
     await userEvent.click(screen.getByRole("checkbox", { name: /Defer indefinitely/ }));
@@ -145,6 +219,7 @@ describe("shared Deck and native attention controls", () => {
     await screen.findByText(/No explicit open or due/);
     await userEvent.click(screen.getByRole("button", { name: /Deferred \(1\)/ }));
     await openFirst();
+    await expandSection("Defer or dismiss");
     await userEvent.click(screen.getByRole("button", { name: "Dismiss without approval or completion" }));
     await screen.findByRole("button", { name: "Reopen call as a new generation" });
     expect(screen.getByText(/work lane: underway/)).toBeTruthy();
@@ -279,12 +354,14 @@ describe("shared Deck and native attention controls", () => {
     const row: NativeRow = { threadId: "cos", turnId: "reply-turn", rowId: "reply-row", sourceSeqStart: 11, sourceSeqEnd: 12, contentSha256: "b".repeat(64), text: "Exact original clarification, not paraphrased", role: "user", createdAt: NOW, initiator: "user", senderThreadId: null, completed: true, visibility: null };
     const fake = host([task]); fake.setRows([row]); fake.setSource("A".repeat(8000) + "Last exact source page");
     const mounted = await attention(fake); await openFirst();
+    await expandSection("Exact source and provenance");
     await userEvent.click(screen.getByRole("button", { name: "Open source thread" }));
     expect(mounted.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "cos" });
     await userEvent.click(screen.getByRole("button", { name: "Read exact source row" }));
     await screen.findByText("8000 of 8022 characters");
     await userEvent.click(screen.getByRole("button", { name: "Load more source text" }));
     await screen.findByText(/Last exact source page/);
+    await expandSection("Associate a committed chat response");
     await userEvent.click(screen.getByRole("button", { name: "Browse native responses" }));
     await screen.findByText(row.text);
     expect(screen.queryByText("Action receipt saved")).toBeNull();
@@ -328,8 +405,10 @@ describe("shared Deck and native attention controls", () => {
     fake.rpc.deck_source = () => ({ status: "missing", ref: task.call!.source!, text: "", nextOffset: null, totalLength: 0, sourceCreatedAt: null });
     fake.rpc.deck_candidates = () => { throw new Error("Committed native row exceeds 16000 characters"); };
     await attention(fake); await openFirst();
+    await expandSection("Exact source and provenance");
     await userEvent.click(screen.getByRole("button", { name: "Read exact source row" }));
     await screen.findByText(/original row is no longer available/);
+    await expandSection("Associate a committed chat response");
     await userEvent.click(screen.getByRole("button", { name: "Browse native responses" }));
     await screen.findByText(/Committed native row exceeds 16000/);
     expect(screen.queryByRole("radio", { name: /native/ })).toBeNull();
@@ -399,6 +478,7 @@ describe("shared Deck and native attention controls", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Task 1.*Please handle call 1/ }));
     await screen.findByRole("button", { name: "Approve exact scope" });
     expect((screen.getByRole("button", { name: "Approve exact scope" }) as HTMLButtonElement).disabled).toBe(true);
+    await expandSection("Associate a committed chat response");
     await userEvent.click(screen.getByRole("button", { name: "Browse native responses" }));
     await userEvent.click(await screen.findByRole("radio", { name: /approval-row/ }));
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Selected native decision" }), "approve");
@@ -459,6 +539,7 @@ describe("shared Deck and native attention controls", () => {
     await userEvent.click(screen.getByRole("button", { name: "Retry same action" }));
     await screen.findByText("Action rejected: This response belongs to another conversation than the call");
     expect(screen.queryByRole("button", { name: "Retry same action" })).toBeNull();
+    await expandSection("Defer or dismiss");
     expect(screen.getByRole("button", { name: "Dismiss without approval or completion" })).toBeTruthy();
   });
 });

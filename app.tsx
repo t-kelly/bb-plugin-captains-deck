@@ -355,7 +355,7 @@ function CardDialog({ taskId, onClose, onChanged }: { taskId: string | null; onC
   return <Dialog open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
     <DialogContent className="deck-board-dialog sm:max-w-2xl">
       <DialogHeader><DialogTitle>Captain's Call · {taskId}</DialogTitle><DialogDescription>Card work and Captain action lifecycle are independent.</DialogDescription></DialogHeader>
-      <CallDetail key={taskId} taskId={taskId} onChanged={onChanged} />
+      <CallDetail key={taskId} taskId={taskId} onChanged={onChanged} onUnavailable={onClose} />
     </DialogContent>
   </Dialog>;
 }

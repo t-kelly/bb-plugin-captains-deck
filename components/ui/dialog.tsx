@@ -44,9 +44,10 @@ function useResponsiveDialog() {
 function Dialog({
   children,
   open: controlledOpen,
+  contained = false,
   onOpenChange: controlledOnChange,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Root>) {
+}: React.ComponentProps<typeof DialogPrimitive.Root> & { contained?: boolean }) {
   const responsiveRoot = useResponsiveRoot(controlledOpen, controlledOnChange);
   const generatedTitleId = React.useId();
   const generatedDescriptionId = React.useId();
@@ -71,6 +72,7 @@ function Dialog({
   const ctx = React.useMemo(
     () => ({
       ...responsiveRoot,
+      isCompactViewport: !contained && responsiveRoot.isCompactViewport,
       titleId,
       descriptionId,
       registerTitleId,
@@ -78,6 +80,7 @@ function Dialog({
     }),
     [
       descriptionId,
+      contained,
       registerDescriptionId,
       registerTitleId,
       responsiveRoot,
@@ -205,6 +208,7 @@ type DialogContentProps = React.ComponentPropsWithoutRef<
 > & {
   onAfterCloseAutoFocus?: () => void;
   hideCloseButton?: boolean;
+  container?: HTMLElement | null;
 };
 
 const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
@@ -215,6 +219,7 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
       hideCloseButton = false,
       onAfterCloseAutoFocus,
       onCloseAutoFocus,
+      container,
       ...props
     },
     ref,
@@ -250,8 +255,8 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
     }
 
     return (
-      <DialogPrimitive.Portal>
-        <DialogOverlay />
+      <DialogPrimitive.Portal container={container}>
+        <DialogOverlay className={container ? "absolute" : undefined} />
         <DialogPrimitive.Content
           ref={ref}
           {...scopeProps}
@@ -261,6 +266,7 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
           }}
           className={cn(
             "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg grid-cols-[minmax(0,1fr)] translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-sm duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
+            container && "absolute",
             className,
           )}
           {...props}

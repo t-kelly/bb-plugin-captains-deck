@@ -101,7 +101,7 @@ function CallSource({ taskId, call, threadId }: { taskId: string; call: CaptainC
   </section>;
 }
 
-export function CallDetail({ taskId, threadId, onChanged }: { taskId: string; threadId?: string; onChanged: () => void }) {
+export function CallDetail({ taskId, threadId, onChanged, compact = false, onUnavailable }: { taskId: string; threadId?: string; onChanged: () => void; compact?: boolean; onUnavailable?: () => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const [task, setTask] = useState<DeckCard | null>(null);
@@ -131,19 +131,29 @@ export function CallDetail({ taskId, threadId, onChanged }: { taskId: string; th
   const inFlight = useRef(false);
   const epoch = useRef(0);
   const seen = useRef("");
+  const unavailableHandler = useRef(onUnavailable);
+  useEffect(() => { unavailableHandler.current = onUnavailable; }, [onUnavailable]);
   const requestKey = `captains-deck:operation:${threadId ?? "board"}:${taskId}`;
-  const refresh = useCallback(() => {
+  const refresh = useCallback((): void => {
     const request = ++epoch.current;
     void rpc.call("deck_get", { taskId, ...(threadId === undefined ? {} : { threadId }) }).then((result) => {
       if (request !== epoch.current) return;
       setTask(result.task);
       setReceipts((previous) => [...new Map([...previous, ...result.receipts].map((receipt) => [receipt.id, receipt])).values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt)));
       setReceiptCursor(result.nextCursor);
+      if (!result.task) {
+        setCardRemoved(true);
+        if (!inFlight.current) unavailableHandler.current?.();
+        return;
+      }
+      if (compact && !result.task.call) { unavailableHandler.current?.(); return; }
       if (result.task.call) {
         const key = `${result.task.id}:${result.task.call.generation}`;
         if (seen.current !== key) {
           seen.current = key;
-          void rpc.call("deck_seen", { taskId, generation: result.task.call.generation, ...(threadId === undefined ? {} : { threadId }) }).catch((cause) => {
+          void rpc.call("deck_seen", { taskId, generation: result.task.call.generation, ...(threadId === undefined ? {} : { threadId }) }).then((marked) => {
+            if (marked === null && request === epoch.current) refresh();
+          }, (cause: unknown) => {
             if (request === epoch.current) setError(`Could not mark seen: ${cause instanceof Error ? cause.message : String(cause)}`);
           });
         }
@@ -151,7 +161,7 @@ export function CallDetail({ taskId, threadId, onChanged }: { taskId: string; th
     }, (cause: unknown) => {
       if (request === epoch.current) setError(cause instanceof Error ? cause.message : String(cause));
     });
-  }, [rpc, taskId, threadId]);
+  }, [rpc, taskId, threadId, compact]);
   useEffect(() => {
     setTask(null); setCardRemoved(false); setReceipts([]); setReceiptCursor(null); setError(null); setCancelledGeneration(null);
     setResponse(""); setOptionId(null); setApproval(""); setCandidates(null); setOmittedRows([]); setSelectedRow(null); setCandidateSeq(undefined); setHistoryCount(5); seen.current = "";
@@ -257,7 +267,7 @@ export function CallDetail({ taskId, threadId, onChanged }: { taskId: string; th
     const request = epoch.current;
     setReceiptBusy(true);
     try {
-      const result = await rpc.call("deck_receipts", { taskId, threadId, cursor: receiptCursor, limit: 30 });
+      const result = await rpc.call("deck_receipts", { taskId, ...(threadId === undefined ? {} : { threadId }), cursor: receiptCursor, limit: 30 });
       if (request !== epoch.current) return;
       setReceipts((previous) => [...new Map([...previous, ...result.receipts].map((receipt) => [receipt.id, receipt])).values()]);
       setReceiptCursor(result.nextCursor);
@@ -284,11 +294,13 @@ export function CallDetail({ taskId, threadId, onChanged }: { taskId: string; th
   const selectedApprovalExpired = call?.approvalScope?.expiresAt !== undefined && call.approvalScope.expiresAt <= (selectedRow?.createdAt ?? Date.now());
   const publicationPending = task.pendingCall?.state === "pending";
   const publicationCancelled = task.pendingCall?.state === "failed" && task.pendingCall.error === "Cancelled";
-  return <div className="deck-detail deck-stack">
-    <header><h2>{task.title}</h2><p className="deck-muted">{task.id} · {task.kind.toUpperCase()} · work lane: {task.state} · revision {task.revision}</p></header>
-    {task.brief ? <Markdown content={task.brief} /> : null}
-    {task.threadId ? <Button variant="outline" size="sm" onClick={() => navigate.toThread(task.threadId!)}>Open worker thread</Button> : null}
-    {task.prUrl ? <UrlLink href={task.prUrl}>Pull request</UrlLink> : null}
+  return <div className={`deck-detail deck-stack${compact ? " deck-call-popup" : ""}`}>
+    <header><h2>{task.title}</h2><p className="deck-muted">{compact ? `work lane: ${task.state} · ${task.kind.toUpperCase()}` : `${task.id} · ${task.kind.toUpperCase()} · work lane: ${task.state} · revision ${task.revision}`}</p></header>
+    {compact ? <details><summary>Work details</summary><p className="deck-muted">{task.id} · revision {task.revision}</p>{task.brief ? <Markdown content={task.brief} /> : null}{task.threadId ? <Button variant="outline" size="sm" onClick={() => navigate.toThread(task.threadId!)}>Open worker thread</Button> : null}{task.prUrl ? <UrlLink href={task.prUrl}>Pull request</UrlLink> : null}</details> : <>
+      {task.brief ? <Markdown content={task.brief} /> : null}
+      {task.threadId ? <Button variant="outline" size="sm" onClick={() => navigate.toThread(task.threadId!)}>Open worker thread</Button> : null}
+      {task.prUrl ? <UrlLink href={task.prUrl}>Pull request</UrlLink> : null}
+    </>}
     {error ? <p role="alert">{error}</p> : null}
     {cancelledGeneration !== null ? <p role="status">Unpublished generation {cancelledGeneration} cancelled. The existing Captain call and work lane were preserved.</p> : null}
     {task.pendingCall ? <section className="deck-receipt" aria-label="Pending publication">
@@ -304,23 +316,25 @@ export function CallDetail({ taskId, threadId, onChanged }: { taskId: string; th
         {!open && call.options.length ? <ul>{call.options.map((option) => <li key={option.id}>{option.label}{option.id === call.recommendedId ? " — recommended" : ""}{option.detail ? <p>{option.detail}</p> : null}</li>)}</ul> : null}
         {call.answerLabel || call.answerNote ? <section aria-label="Current recorded response"><h3>{call.kind === "DO" && open ? "Latest recorded clarification" : "Recorded response"}</h3>{call.answerLabel ? <p>{call.answerLabel}</p> : null}{call.answerNote ? <pre className="deck-original">{call.answerNote}</pre> : null}</section> : null}
         {call.recommendation ? <><h3>Recommendation</h3><Markdown content={call.recommendation} /></> : null}
-        {call.context ? <><h3>Context</h3><Markdown content={call.context} /></> : null}
+        {call.context ? compact ? <details><summary>Context</summary><div className="deck-context-body"><Markdown content={call.context} /></div></details> : <><h3>Context</h3><Markdown content={call.context} /></> : null}
         {call.deferUntil !== null && call.status === "deferred" ? <p>Deferred until {new Date(call.deferUntil).toLocaleString()}</p> : call.status === "deferred" ? <p>Deferred indefinitely; still unresolved.</p> : null}
         {call.approvalScope ? <section className="deck-receipt" aria-label="Exact approval scope"><h3>Exact approval scope</h3><dl><dt>Action</dt><dd>{call.approvalScope.action}</dd><dt>Target</dt><dd>{call.approvalScope.target}</dd><dt>Constraints</dt><dd>{call.approvalScope.constraints}</dd><dt>Expiry</dt><dd>{call.approvalScope.expiresAt === undefined ? "No expiry specified" : new Date(call.approvalScope.expiresAt).toLocaleString()}</dd></dl>{expired ? <p role="alert">This approval scope has expired.</p> : null}<p>Recording approval does not execute external work.</p></section> : null}
-        {call.evidence.length ? <section aria-label="Evidence"><h3>Evidence</h3><ul>{call.evidence.map((item, index) => <li key={index}>{item.url ? <UrlLink href={item.url}>{item.label}</UrlLink> : item.label}{item.threadId ? <Button size="sm" variant="link" onClick={() => navigate.toThread(item.threadId!)}>Open evidence thread</Button> : null}{item.rowId ? <span className="deck-muted"> row {item.rowId} (thread link is not an exact row link)</span> : null}</li>)}</ul></section> : null}
+        {call.evidence.length ? <details open={compact ? undefined : true} aria-label="Evidence"><summary>Evidence ({call.evidence.length})</summary><ul>{call.evidence.map((item, index) => <li key={index}>{item.url ? <UrlLink href={item.url}>{item.label}</UrlLink> : item.label}{item.threadId ? <Button size="sm" variant="link" onClick={() => navigate.toThread(item.threadId!)}>Open evidence thread</Button> : null}{item.rowId ? <span className="deck-muted"> row {item.rowId} (thread link is not an exact row link)</span> : null}</li>)}</ul></details> : null}
       </section>
-      <CallSource key={`${taskId}:${call.generation}`} taskId={taskId} call={call} threadId={threadId} />
+      {compact ? <details><summary>Exact source and provenance</summary><CallSource key={`${taskId}:${call.generation}`} taskId={taskId} call={call} threadId={threadId} /></details> : <CallSource key={`${taskId}:${call.generation}`} taskId={taskId} call={call} threadId={threadId} />}
       {uncertain ? <section className="deck-receipt"><p role="status">An action response is unconfirmed. Its operation key is retained; retry will not repeat the action.</p><Button disabled={busy} onClick={() => void submit(uncertain)}>{busy ? "Saving…" : "Retry same action"}</Button><Button variant="outline" onClick={refresh}>Refresh saved state</Button></section> : null}
       {open ? <fieldset className="deck-stack" disabled={busy || !!uncertain || !!cancellation || publicationPending}>
         <legend>Record a response</legend>
         <p className="deck-muted">Local client record, not a human attestation. {call.kind === "DO" ? "Answer records clarification; only Complete DO clears this action. Neither lands the work." : "Answer resolves this action only; it does not change the work lane."}</p>
         {call.options.length ? <div role="radiogroup" aria-label="Call options" className="deck-stack">{call.options.map((option) => <label key={option.id} className="deck-option"><input type="radio" name={`option-${taskId}`} checked={optionId === option.id} onChange={() => setOptionId(option.id)} /><span>{option.label}{option.id === call.recommendedId ? " — recommended" : ""}{option.detail ? <small>{option.detail}</small> : null}</span></label>)}<Button variant="ghost" size="sm" onClick={() => setOptionId(null)}>Clear option</Button></div> : null}
-        <label>Response<textarea aria-label="Response" rows={3} maxLength={16000} value={response} onChange={(event) => setResponse(event.target.value)} /></label>
-        <div className="deck-actions">{call.kind === "APPROVE" ? <><Button disabled={expired} onClick={() => action("answer", "approve")}>Approve exact scope</Button><Button variant="outline" onClick={() => action("answer", "decline")}>Decline exact scope</Button></> : <Button disabled={!response.trim() && !optionId} onClick={() => action("answer")}>{call.kind === "DO" ? "Save clarification" : "Save answer"}</Button>}{call.kind === "DO" ? <Button onClick={() => action("complete")}>Complete DO</Button> : null}</div>
-        <div className="deck-receipt deck-stack"><label>Defer until<input aria-label="Defer until" type="datetime-local" value={deferDate} disabled={indefinite} onChange={(event) => setDeferDate(event.target.value)} /></label><label><input type="checkbox" checked={indefinite} onChange={(event) => setIndefinite(event.target.checked)} /> Defer indefinitely (still unresolved)</label><Button variant="outline" onClick={() => action("defer")}>Defer call</Button></div>
-        <Button variant="outline" onClick={() => action("dismiss")}>Dismiss without approval or completion</Button>
+        <label>{call.kind === "APPROVE" ? "Response (optional note)" : "Response"}<textarea aria-label="Response" rows={compact ? 2 : 3} maxLength={16000} value={response} onChange={(event) => setResponse(event.target.value)} /></label>
+        <div className="deck-actions">{call.kind === "APPROVE" ? <><Button disabled={expired} onClick={() => action("answer", "approve")}>Approve exact scope</Button><Button variant="outline" onClick={() => action("answer", "decline")}>Decline exact scope</Button></> : <Button variant={compact && call.kind === "DO" ? "outline" : "default"} disabled={!response.trim() && !optionId} onClick={() => action("answer")}>{call.kind === "DO" ? "Save clarification" : "Save answer"}</Button>}{call.kind === "DO" ? <Button onClick={() => action("complete")}>Complete DO</Button> : null}</div>
+        <details open={compact ? undefined : true}><summary>Defer or dismiss</summary><div className="deck-stack">
+          <label>Defer until<input aria-label="Defer until" type="datetime-local" value={deferDate} disabled={indefinite} onChange={(event) => setDeferDate(event.target.value)} /></label><label><input type="checkbox" checked={indefinite} onChange={(event) => setIndefinite(event.target.checked)} /> Defer indefinitely (still unresolved)</label><Button variant="outline" onClick={() => action("defer")}>Defer call</Button>
+          <Button variant="outline" onClick={() => action("dismiss")}>Dismiss without approval or completion</Button>
+        </div></details>
       </fieldset> : <Button disabled={busy || !!uncertain || !!cancellation || publicationPending} onClick={() => action("reopen")}>Reopen call as a new generation</Button>}
-      {open ? <section className="deck-stack" aria-label="Associate native chat response"><h3>Choose a committed native chat response</h3><p>No chat row is associated automatically. Select the exact original row for this card and generation {call.generation}. Selection does not establish keyboard-human authority.</p>{producerThread && call.replyThreadId === producerThread ? <Button variant="outline" size="sm" disabled={candidateBusy} onClick={() => void loadCandidates(true)}>{candidates === null ? "Browse native responses" : "Refresh native responses"}</Button> : <p>No matching reply thread was bound to this call; native association is unavailable.</p>}
+      {open ? <details open={compact ? undefined : true} className="deck-stack" aria-label="Associate native chat response"><summary>Associate a committed chat response</summary><p>No chat row is associated automatically. Select the exact original row for this card and generation {call.generation}. Selection does not establish keyboard-human authority.</p>{producerThread && call.replyThreadId === producerThread ? <Button variant="outline" size="sm" disabled={candidateBusy} onClick={() => void loadCandidates(true)}>{candidates === null ? "Browse native responses" : "Refresh native responses"}</Button> : <p>No matching reply thread was bound to this call; native association is unavailable.</p>}
         {candidateError ? <p role="alert">Native responses unavailable: {candidateError}. Oversized rows cannot be substituted with truncated text.</p> : null}
         {omittedRows.map((ref) => <p key={ref.rowId} className="deck-muted">Native row {ref.rowId} exceeds the association limit; no truncated substitute is used. <Button variant="link" size="sm" onClick={() => navigate.toThread(ref.threadId)}>Open original conversation</Button></p>)}
         {candidates?.length === 0 ? <p>No eligible committed native user rows in this page.</p> : null}
@@ -329,7 +343,7 @@ export function CallDetail({ taskId, threadId, onChanged }: { taskId: string; th
         {call.kind === "APPROVE" ? <label>Explicit selected-row decision<select aria-label="Selected native decision" value={approval} onChange={(event) => setApproval(event.target.value as "approve" | "decline" | "")}><option value="">Choose, never inferred</option><option value="approve">Approve exact scope</option><option value="decline">Decline exact scope</option></select></label> : null}
         {call.kind === "APPROVE" && selectedRow ? <p className="deck-muted">The whole original response must be an unqualified “approve” or “decline” (“I approve” is accepted) matching your selection. Conditional or negated wording stays open for a fresh response. Expiry is checked against that row&apos;s timestamp, not the time you associate it.</p> : null}
         <Button disabled={!selectedRow || busy || !!uncertain || !!cancellation || publicationPending || (call.kind === "APPROVE" && (!approval || (approval === "approve" && selectedApprovalExpired)))} onClick={associate}>Associate selected row as {call.kind === "DO" ? "clarification" : "answer"}</Button>
-      </section> : null}
+      </details> : null}
     </> : <p>No current Captain call. Work and worker status do not create one.</p>}
     {task.history.length ? <section className="deck-stack" aria-label="Earlier calls">
       <h3>Earlier calls ({task.history.length})</h3>

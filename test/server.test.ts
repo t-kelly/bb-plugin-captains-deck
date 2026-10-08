@@ -55,6 +55,17 @@ describe("one authoritative Deck mutation boundary", () => {
     expect(page.counts).toMatchObject({ total: 40, attention: 0, unresolved: 0, unseen: 0 });
   });
 
+  it("returns expected missing selection results after a card is removed", async () => {
+    const host = await fixture(true);
+    const task = await chart(host, "Temporary selection");
+    const removal = await host.harness.behavior.runCli(["remove", task.id, "--json"]);
+    expect(removal.exitCode).toBe(0);
+    expect(await host.harness.behavior.callRpc("deck_get", { taskId: task.id, threadId: "producer" })).toEqual({ task: null, receipts: [], nextCursor: null });
+    expect(await host.harness.behavior.callRpc("deck_seen", { taskId: task.id, generation: 1, threadId: "producer" })).toBeNull();
+    expect(await host.harness.behavior.callRpc("deck_source", { taskId: task.id, generation: 1, threadId: "producer" })).toBeNull();
+    expect(await host.harness.behavior.callRpc("deck_candidates", { taskId: task.id, generation: 1, threadId: "producer", limit: 30 })).toEqual({ rows: [], omitted: [], nextSeq: 0, hasMore: false });
+  });
+
   it("keeps an old unresolved call in bearings while newer cards churn", async () => {
     const host = await fixture();
     let stale = await chart(host, "Old unanswered call");

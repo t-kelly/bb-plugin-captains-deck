@@ -205,19 +205,20 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     getSetup: async () => getSetup(),
     deck_board: async (input) => { await refreshPending(); return store.listBoard(input ?? { limit: 50 }); },
-    deck_get: async ({ taskId, threadId }) => { await scoped(threadId); const page = store.listReceipts(taskId, { limit: 30 }); return { task: store.getTask(taskId), receipts: page.receipts, nextCursor: page.nextCursor }; },
+    deck_get: async ({ taskId, threadId }) => { await scoped(threadId); const page = store.listReceipts(taskId, { limit: 30 }); return { task: store.findTask(taskId), receipts: page.receipts, nextCursor: page.nextCursor }; },
     deck_calls: async (input) => { await guard(input.threadId); await refreshPending(); await guard(input.threadId); return store.listCalls(input); },
     deck_action: async (input) => apply(input, "panel-local"),
     deck_answer: async (input) => apply(input, "panel-local"),
-    deck_seen: async ({ taskId, generation, threadId }) => { await scoped(threadId); const result = store.markSeen(taskId, generation); changed(); return result; },
-    deck_source: async ({ taskId, generation, threadId, offset, limit }) => { await scoped(threadId); const task = store.getTask(taskId); const call = [task.call, ...task.history].find((call) => call?.generation === generation); if (!call) throw new Error("call_generation_missing"); if (!call.source) return null; const result = await evidence.source(call.source, offset, limit); await scoped(threadId); return result; },
+    deck_seen: async ({ taskId, generation, threadId }) => { await scoped(threadId); const task = store.findTask(taskId); if (task?.call?.generation !== generation) return null; const result = store.markSeen(taskId, generation); changed(); return result; },
+    deck_source: async ({ taskId, generation, threadId, offset, limit }) => { await scoped(threadId); const task = store.findTask(taskId); if (!task) return null; const call = [task.call, ...task.history].find((call) => call?.generation === generation); if (!call?.source) return null; const result = await evidence.source(call.source, offset, limit); await scoped(threadId); return result; },
     deck_candidates: async ({ threadId, taskId, generation, afterSeq, limit }) => {
       await guard(threadId);
-      const task = store.getTask(taskId);
-      if (!task.call || task.call.generation !== generation || task.call.replyThreadId !== threadId) throw new Error("This call has no response boundary in the configured conversation.");
+      const task = store.findTask(taskId);
+      if (!task?.call || task.call.generation !== generation) return { rows: [], omitted: [], nextSeq: afterSeq ?? 0, hasMore: false };
+      if (task.call.replyThreadId !== threadId) throw new Error("This call has no response boundary in the configured conversation.");
       const result = await evidence.forwardRows(threadId, Math.max(afterSeq ?? 0, task.call.replyAfterSeq), limit);
       await guard(threadId);
-      if (store.getTask(taskId).call?.generation !== generation) throw new Error("call_generation_changed");
+      if (store.findTask(taskId)?.call?.generation !== generation) return { rows: [], omitted: [], nextSeq: result.nextSeq, hasMore: false };
       const rows = result.rows.filter((row) => row.role === "user" && row.completed && row.initiator === "user" && row.senderThreadId === null && row.visibility === null && row.sourceSeqStart > task.call!.replyAfterSeq);
       // Keep the cursor usable after an oversized response. Never associate a truncated substitute.
       return { ...result, rows: rows.filter((row) => row.text.length <= 16000), omitted: rows.filter((row) => row.text.length > 16000).map(sourceRef) };
